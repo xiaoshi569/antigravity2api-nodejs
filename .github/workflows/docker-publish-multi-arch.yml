@@ -1,0 +1,71 @@
+# 工作流名称
+name: CI/CD - Build and Push Multi-Arch Image to GHCR
+
+# 触发工作流的事件
+on:
+  push:
+    branches: [ "main" ]
+  release:
+    types: [ created ]
+  workflow_dispatch:
+
+# 定义工作任务
+jobs:
+  build-and-push-multi-arch:
+    # 指定运行环境
+    runs-on: ubuntu-latest
+    
+    # 为工作流授予写软件包的权限
+    permissions:
+      contents: read
+      packages: write
+
+    # 定义任务步骤
+    steps:
+      # 步骤1：检出您的代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步骤2：【新增】设置 QEMU 静态二进制文件
+      # 这是实现跨平台构建的关键，它允许在amd64的runner上模拟arm64等架构
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 步骤3：【新增】设置 Docker Buildx
+      # Buildx 是一个Docker CLI插件，支持多架构构建
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 步骤4：登录到 GitHub Container Registry (ghcr.io)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤5：提取元数据（镜像名称和标签）
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=short,event=push
+
+      # 步骤6：【修改】构建并推送到 GHCR（支持多架构）
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # 关键参数：指定要构建的平台列表
+          platforms: linux/amd64,linux/arm64
+          # 使用 buildx 的缓存来加速后续构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
