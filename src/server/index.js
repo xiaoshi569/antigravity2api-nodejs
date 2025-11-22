@@ -152,7 +152,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
       message.content = fullContent;
       if (toolCalls.length > 0) {
-        message.tool_calls = toolCalls;
+        // 非流式模式下移除 index 字段（OpenAI 规范：非流式不包含 index）
+        message.tool_calls = toolCalls.map(({ index, ...rest }) => rest);
       }
       
       res.json({

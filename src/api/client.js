@@ -165,7 +165,8 @@ export async function generateAssistantResponse(requestBody, callback) {
             } else if (part.functionCall) {
               logger.debug('检测到 functionCall');
               toolCalls.push({
-                id: part.functionCall.id,
+                index: toolCalls.length, // 添加 index 字段，从 0 开始
+                id: part.functionCall.id || `call_${Date.now()}_${toolCalls.length}`, // 如果没有 id 则生成一个
                 type: 'function',
                 function: {
                   name: part.functionCall.name,
