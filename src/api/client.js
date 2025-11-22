@@ -163,10 +163,15 @@ export async function generateAssistantResponse(requestBody, callback) {
               // 处理缓冲区
               processBuffer();
             } else if (part.functionCall) {
-              logger.debug('检测到 functionCall');
+              logger.debug('检测到 functionCall:', JSON.stringify(part.functionCall).substring(0, 200));
+              // 将 thought_signature 编码到 id 中，格式: id::thought_signature
+              const baseId = part.functionCall.id || `call_${Date.now()}_${toolCalls.length}`;
+              const thoughtSig = part.functionCall.thoughtSignature || '';
+              const encodedId = thoughtSig ? `${baseId}::${thoughtSig}` : baseId;
+
               toolCalls.push({
                 index: toolCalls.length, // 添加 index 字段，从 0 开始
-                id: part.functionCall.id || `call_${Date.now()}_${toolCalls.length}`, // 如果没有 id 则生成一个
+                id: encodedId,
                 type: 'function',
                 function: {
                   name: part.functionCall.name,

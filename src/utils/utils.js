@@ -68,16 +68,28 @@ function handleAssistantMessage(message, antigravityMessages){
   const lastMessage = antigravityMessages[antigravityMessages.length - 1];
   const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
   const hasContent = message.content && message.content.trim() !== '';
-  
-  const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => ({
-    functionCall: {
-      id: toolCall.id,
+
+  const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => {
+    // 解析编码的 id，格式: id::thought_signature
+    const [baseId, thoughtSignature] = toolCall.id.includes('::')
+      ? toolCall.id.split('::')
+      : [toolCall.id, null];
+
+    const functionCall = {
+      id: baseId,
       name: toolCall.function.name,
       args: {
         query: toolCall.function.arguments
       }
+    };
+
+    // 如果有 thought_signature，添加到 functionCall 中
+    if (thoughtSignature) {
+      functionCall.thoughtSignature = thoughtSignature;
     }
-  })) : [];
+
+    return { functionCall };
+  }) : [];
   
   if (lastMessage?.role === "model" && hasToolCalls && !hasContent){
     lastMessage.parts.push(...antigravityTools)
@@ -93,13 +105,19 @@ function handleAssistantMessage(message, antigravityMessages){
   }
 }
 function handleToolCall(message, antigravityMessages){
+  // 解析 tool_call_id，提取 baseId（去掉 thought_signature 部分）
+  const [baseToolCallId] = message.tool_call_id.includes('::')
+    ? message.tool_call_id.split('::')
+    : [message.tool_call_id];
+
   // 从之前的 model 消息中找到对应的 functionCall name
   let functionName = '';
   for (let i = antigravityMessages.length - 1; i >= 0; i--) {
     if (antigravityMessages[i].role === 'model') {
       const parts = antigravityMessages[i].parts;
       for (const part of parts) {
-        if (part.functionCall && part.functionCall.id === message.tool_call_id) {
+        // 使用 baseId 进行匹配（因为存储时已经解析过了）
+        if (part.functionCall && part.functionCall.id === baseToolCallId) {
           functionName = part.functionCall.name;
           break;
         }
@@ -107,11 +125,11 @@ function handleToolCall(message, antigravityMessages){
       if (functionName) break;
     }
   }
-  
+
   const lastMessage = antigravityMessages[antigravityMessages.length - 1];
   const functionResponse = {
     functionResponse: {
-      id: message.tool_call_id,
+      id: baseToolCallId, // 使用 baseId
       name: functionName,
       response: {
         output: message.content
