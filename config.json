@@ -19,6 +19,11 @@
     "maxRequestSize": "50mb",
     "apiKey": "sk-text"
   },
+  "retry": {
+    "maxRetries": 3,
+    "baseDelay": 1000,
+    "_comment": "maxRetries: 最大重试次数, baseDelay: 基础延迟(毫秒)"
+  },
   "systemInstruction": "",
   "thinking": {
     "output": "reasoning_content",

@@ -2,7 +2,9 @@ import tokenManager from '../auth/token_manager.js';
 import config from '../config/config.js';
 import logger from '../utils/logger.js';
 
-export async function generateAssistantResponse(requestBody, callback) {
+export async function generateAssistantResponse(requestBody, callback, retryCount = 0) {
+  const maxRetries = config.retry?.maxRetries ?? 3;
+  const baseDelay = config.retry?.baseDelay ?? 1000;
   const token = await tokenManager.getToken();
 
   if (!token) {
@@ -25,8 +27,14 @@ export async function generateAssistantResponse(requestBody, callback) {
       body: JSON.stringify(requestBody)
     });
   } catch (networkError) {
-    // 网络错误（DNS解析失败、连接超时等）
-    throw new Error(`网络错误: ${networkError.message}`);
+    // 网络错误（连接超时、网络中断等）
+    if (retryCount < maxRetries) {
+      const waitTime = baseDelay * (retryCount + 1);
+      logger.warn(`网络错误(${networkError.message})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return generateAssistantResponse(requestBody, callback, retryCount + 1);
+    }
+    throw new Error(`网络错误，重试次数已耗尽: ${networkError.message}`);
   }
 
   if (!response.ok) {
@@ -40,10 +48,23 @@ export async function generateAssistantResponse(requestBody, callback) {
       tokenManager.disableCurrentToken(token);
       throw new Error(`账号认证失败(${statusCode})，已自动禁用。错误详情: ${errorText}`);
     } else if (statusCode === 429) {
-      const waitTime = retryAfterMs ? Math.round(retryAfterMs / 1000) : '未知';
-      throw new Error(`请求过于频繁(429)，建议等待 ${waitTime} 秒。错误详情: ${errorText}`);
+      // 429 限流 - 切换 token 重试
+      if (retryCount < maxRetries) {
+        const waitTime = retryAfterMs || baseDelay;
+        logger.warn(`请求限流(429)，等待 ${Math.round(waitTime / 1000)}秒 后切换token重试 (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        return generateAssistantResponse(requestBody, callback, retryCount + 1);
+      }
+      throw new Error(`请求过于频繁(429)，重试次数已耗尽。错误详情: ${errorText}`);
     } else if (statusCode >= 500 && statusCode < 600) {
-      throw new Error(`服务器错误(${statusCode})，请稍后重试。错误详情: ${errorText}`);
+      // 5xx 服务器错误 - 等待后重试
+      if (retryCount < maxRetries) {
+        const waitTime = baseDelay * (retryCount + 1); // 递增等待时间
+        logger.warn(`服务器错误(${statusCode})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        return generateAssistantResponse(requestBody, callback, retryCount + 1);
+      }
+      throw new Error(`服务器错误(${statusCode})，重试次数已耗尽。错误详情: ${errorText}`);
     } else {
       throw new Error(`API请求失败 (${statusCode}): ${errorText}`);
     }
@@ -165,8 +186,9 @@ export async function generateAssistantResponse(requestBody, callback) {
             } else if (part.functionCall) {
               logger.debug('检测到 functionCall:', JSON.stringify(part.functionCall).substring(0, 200));
               // 将 thought_signature 编码到 id 中，格式: id::thought_signature
+              // 兼容 thoughtSignature 和 thought_signature 两种字段名
               const baseId = part.functionCall.id || `call_${Date.now()}_${toolCalls.length}`;
-              const thoughtSig = part.functionCall.thoughtSignature || '';
+              const thoughtSig = part.functionCall.thoughtSignature || part.functionCall.thought_signature || '';
               const encodedId = thoughtSig ? `${baseId}::${thoughtSig}` : baseId;
 
               toolCalls.push({

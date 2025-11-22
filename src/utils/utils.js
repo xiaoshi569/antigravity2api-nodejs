@@ -71,8 +71,10 @@ function handleAssistantMessage(message, antigravityMessages){
 
   const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => {
     // 解析编码的 id，格式: id::thought_signature
-    const [baseId, thoughtSignature] = toolCall.id.includes('::')
-      ? toolCall.id.split('::')
+    // 只分割第一个 ::，避免 thought_signature 中包含 :: 导致分割错误
+    const separatorIndex = toolCall.id.indexOf('::');
+    const [baseId, thoughtSignature] = separatorIndex !== -1
+      ? [toolCall.id.substring(0, separatorIndex), toolCall.id.substring(separatorIndex + 2)]
       : [toolCall.id, null];
 
     const functionCall = {
@@ -106,9 +108,11 @@ function handleAssistantMessage(message, antigravityMessages){
 }
 function handleToolCall(message, antigravityMessages){
   // 解析 tool_call_id，提取 baseId（去掉 thought_signature 部分）
-  const [baseToolCallId] = message.tool_call_id.includes('::')
-    ? message.tool_call_id.split('::')
-    : [message.tool_call_id];
+  // 只提取第一个 :: 之前的部分作为 baseId
+  const separatorIndex = message.tool_call_id.indexOf('::');
+  const baseToolCallId = separatorIndex !== -1
+    ? message.tool_call_id.substring(0, separatorIndex)
+    : message.tool_call_id;
 
   // 从之前的 model 消息中找到对应的 functionCall name
   let functionName = '';
