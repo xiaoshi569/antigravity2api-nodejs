@@ -49,7 +49,8 @@ app.get('/v1/models', async (req, res) => {
 });
 
 app.post('/v1/chat/completions', async (req, res) => {
-  const { messages, model, stream = true, tools, ...params} = req.body;
+  // OpenAI API 默认 stream = false
+  const { messages, model, stream = false, tools, ...params} = req.body;
   try {
     
     if (!messages) {
@@ -68,6 +69,8 @@ app.post('/v1/chat/completions', async (req, res) => {
       const created = Math.floor(Date.now() / 1000);
       let hasToolCall = false;
       
+      const thinkingOutput = config.thinking?.output || 'filter';
+
       await generateAssistantResponse(requestBody, (data) => {
         if (data.type === 'tool_calls') {
           hasToolCall = true;
@@ -78,7 +81,8 @@ app.post('/v1/chat/completions', async (req, res) => {
             model,
             choices: [{ index: 0, delta: { tool_calls: data.tool_calls }, finish_reason: null }]
           })}\n\n`);
-        } else {
+        } else if (data.type === 'text') {
+          // 输出正文内容
           res.write(`data: ${JSON.stringify({
             id,
             object: 'chat.completion.chunk',
@@ -86,6 +90,28 @@ app.post('/v1/chat/completions', async (req, res) => {
             model,
             choices: [{ index: 0, delta: { content: data.content }, finish_reason: null }]
           })}\n\n`);
+        } else if (data.type === 'thinking') {
+          // 根据配置决定如何处理思维链
+          if (thinkingOutput === 'reasoning_content') {
+            // DeepSeek 风格：输出到 reasoning_content 字段
+            res.write(`data: ${JSON.stringify({
+              id,
+              object: 'chat.completion.chunk',
+              created,
+              model,
+              choices: [{ index: 0, delta: { reasoning_content: data.content }, finish_reason: null }]
+            })}\n\n`);
+          } else if (thinkingOutput === 'raw') {
+            // 原始格式：思维链也输出到 content
+            res.write(`data: ${JSON.stringify({
+              id,
+              object: 'chat.completion.chunk',
+              created,
+              model,
+              choices: [{ index: 0, delta: { content: data.content }, finish_reason: null }]
+            })}\n\n`);
+          }
+          // thinkingOutput === 'filter' 时不输出
         }
       });
       
@@ -100,16 +126,31 @@ app.post('/v1/chat/completions', async (req, res) => {
       res.end();
     } else {
       let fullContent = '';
+      let reasoningContent = '';
       let toolCalls = [];
+      const thinkingOutput = config.thinking?.output || 'filter';
+
       await generateAssistantResponse(requestBody, (data) => {
         if (data.type === 'tool_calls') {
           toolCalls = data.tool_calls;
-        } else {
+        } else if (data.type === 'text') {
           fullContent += data.content;
+        } else if (data.type === 'thinking') {
+          if (thinkingOutput === 'reasoning_content') {
+            reasoningContent += data.content;
+          } else if (thinkingOutput === 'raw') {
+            fullContent += data.content;
+          }
+          // thinkingOutput === 'filter' 时不累积
         }
       });
-      
-      const message = { role: 'assistant', content: fullContent };
+
+      // 构建 message，reasoning_content 放在 content 之前
+      const message = { role: 'assistant' };
+      if (reasoningContent) {
+        message.reasoning_content = reasoningContent;
+      }
+      message.content = fullContent;
       if (toolCalls.length > 0) {
         message.tool_calls = toolCalls;
       }
@@ -128,32 +169,26 @@ app.post('/v1/chat/completions', async (req, res) => {
     }
   } catch (error) {
     logger.error('生成响应失败:', error.message);
+
+    // 根据错误消息判断状态码
+    let statusCode = 500;
+    if (error.message.includes('(401)') || error.message.includes('(403)')) {
+      statusCode = 401;
+    } else if (error.message.includes('(429)')) {
+      statusCode = 429;
+    } else if (error.message.includes('没有可用的token')) {
+      statusCode = 503; // Service Unavailable
+    }
+
     if (!res.headersSent) {
-      if (stream) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        const id = `chatcmpl-${Date.now()}`;
-        const created = Math.floor(Date.now() / 1000);
-        res.write(`data: ${JSON.stringify({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta: { content: `错误: ${error.message}` }, finish_reason: null }]
-        })}\n\n`);
-        res.write(`data: ${JSON.stringify({
-          id,
-          object: 'chat.completion.chunk',
-          created,
-          model,
-          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
-        })}\n\n`);
-        res.write('data: [DONE]\n\n');
-        res.end();
-      } else {
-        res.status(500).json({ error: error.message });
-      }
+      // 错误时统一返回JSON格式，不使用SSE流
+      res.status(statusCode).json({
+        error: {
+          message: error.message,
+          type: 'api_error',
+          code: statusCode
+        }
+      });
     }
   }
 });

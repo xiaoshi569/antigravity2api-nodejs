@@ -16,4 +16,11 @@ logs/
 .DS_Store
 Thumbs.db
 
+# IDE
+.vscode/
+.idea/
+
+# 测试文件
+test_request.json
+
 data/

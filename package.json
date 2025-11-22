@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/server/index.js",
     "login": "node scripts/oauth-server.js",
-    "dev": "node --watch src/server/index.js"
+    "dev": "node --watch src/server/index.js",
+    "debug": "set DEBUG=true && node src/server/index.js"
   },
   "keywords": ["antigravity", "openai", "api", "proxy"],
   "author": "",

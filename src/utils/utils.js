@@ -132,7 +132,10 @@ function handleToolCall(message, antigravityMessages){
 function openaiMessageToAntigravity(openaiMessages){
   const antigravityMessages = [];
   for (const message of openaiMessages) {
-    if (message.role === "user" || message.role === "system") {
+    // system 消息单独处理，不加入普通消息列表
+    if (message.role === "system") {
+      continue;
+    } else if (message.role === "user") {
       const extracted = extractImagesFromContent(message.content);
       handleUserMessage(extracted, antigravityMessages);
     } else if (message.role === "assistant") {
@@ -141,8 +144,31 @@ function openaiMessageToAntigravity(openaiMessages){
       handleToolCall(message, antigravityMessages);
     }
   }
-  
+
   return antigravityMessages;
+}
+
+/**
+ * 从 OpenAI 消息中提取系统提示词
+ * @param {Array} openaiMessages - OpenAI 格式的消息数组
+ * @returns {string|null} 系统提示词或 null
+ */
+function extractSystemPrompt(openaiMessages) {
+  // 查找第一个 system 消息
+  const systemMessage = openaiMessages.find(msg => msg.role === "system");
+  if (systemMessage && systemMessage.content) {
+    // 支持字符串和数组格式
+    if (typeof systemMessage.content === 'string') {
+      return systemMessage.content;
+    } else if (Array.isArray(systemMessage.content)) {
+      // 多模态格式，只提取文本部分
+      return systemMessage.content
+        .filter(item => item.type === 'text')
+        .map(item => item.text)
+        .join('');
+    }
+  }
+  return null;
 }
 function generateGenerationConfig(parameters, enableThinking, actualModelName){
   const generationConfig = {
@@ -184,13 +210,17 @@ function convertOpenAIToolsToAntigravity(openaiTools){
   })
 }
 function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
-  const enableThinking = modelName.endsWith('-thinking') || 
-    modelName === 'gemini-2.5-pro' || 
+  const enableThinking = modelName.endsWith('-thinking') ||
+    modelName === 'gemini-2.5-pro' ||
     modelName.startsWith('gemini-3-pro-') ||
     modelName === "rev19-uic3-1p" ||
     modelName === "gpt-oss-120b-medium"
   const actualModelName = modelName.endsWith('-thinking') ? modelName.slice(0, -9) : modelName;
-  
+
+  // 优先使用用户传入的系统提示词，否则使用配置文件中的默认值
+  const userSystemPrompt = extractSystemPrompt(openaiMessages);
+  const systemPrompt = userSystemPrompt || config.systemInstruction;
+
   return{
     project: generateProjectId(),
     requestId: generateRequestId(),
@@ -198,7 +228,7 @@ function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
       contents: openaiMessageToAntigravity(openaiMessages),
       systemInstruction: {
         role: "user",
-        parts: [{ text: config.systemInstruction }]
+        parts: [{ text: systemPrompt }]
       },
       tools: convertOpenAIToolsToAntigravity(openaiTools),
       toolConfig: {
