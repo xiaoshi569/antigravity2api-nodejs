@@ -1,5 +1,13 @@
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import log from '../utils/logger.js';
+
+// 获取项目根目录的绝对路径
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const projectRoot = join(__dirname, '../..');
+const configPath = join(projectRoot, 'config.json');
 
 const defaultConfig = {
   server: { port: 8045, host: '127.0.0.1' },
@@ -16,7 +24,7 @@ const defaultConfig = {
 
 let config;
 try {
-  config = JSON.parse(fs.readFileSync('./config.json', 'utf8'));
+  config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   log.info('✓ 配置文件加载成功');
 } catch {
   config = defaultConfig;
