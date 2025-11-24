@@ -35,7 +35,7 @@ COPY config.json ./
 RUN mkdir -p data
 
 # 暴露端口
-EXPOSE 8045
+EXPOSE 1562
 
 # 启动应用
 CMD [ "node", "src/server/index.js" ]
