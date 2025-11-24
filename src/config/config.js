@@ -26,9 +26,10 @@ let config;
 try {
   config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   log.info('✓ 配置文件加载成功');
-} catch {
+} catch (error) {
   config = defaultConfig;
-  log.warn('⚠ 配置文件未找到，使用默认配置');
+  log.warn(`⚠ 配置文件未找到: ${configPath}`);
+  log.warn(`错误信息: ${error.message}`);
 }
 
 export default config;
