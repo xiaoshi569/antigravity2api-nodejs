@@ -16,7 +16,99 @@ class TokenManager {
     this.currentIndex = 0;
     this.maxRetries = 3; // 最大重试次数
     this.activeRequests = new Map(); // 跟踪每个 token 的活跃请求数
+
+    // 添加统计功能
+    this.stats = new Map(); // 记录每个 token 的使用统计
     this.loadTokens();
+  }
+
+  /**
+   * 初始化或获取 token 统计信息
+   */
+  initStats(token) {
+    // 安全检查：token 和 refresh_token 必须存在
+    if (!token || !token.refresh_token) {
+      log.warn('无法初始化统计信息: token 或 refresh_token 为空');
+      return null;
+    }
+
+    if (!this.stats.has(token.refresh_token)) {
+      this.stats.set(token.refresh_token, {
+        totalRequests: 0,
+        successCount: 0,
+        failureCount: 0,
+        lastUsedTime: null,
+        lastError: null,
+        refreshCount: 0,
+        status: 'idle', // idle, active, rate_limited, disabled
+        cooldownUntil: null // 冷却结束时间（毫秒时间戳）
+      });
+    }
+    return this.stats.get(token.refresh_token);
+  }
+
+  /**
+   * 记录成功请求
+   */
+  recordSuccess(token) {
+    if (!token) return;
+    const stats = this.initStats(token);
+    if (!stats) return;
+
+    stats.totalRequests++;
+    stats.successCount++;
+    stats.lastUsedTime = Date.now();
+    stats.status = 'active';
+    stats.cooldownUntil = null; // 成功后清除冷却时间
+  }
+
+  /**
+   * 记录失败请求
+   */
+  recordFailure(token, error) {
+    if (!token) return;
+    const stats = this.initStats(token);
+    if (!stats) return;
+
+    stats.totalRequests++;
+    stats.failureCount++;
+    stats.lastUsedTime = Date.now();
+    stats.lastError = {
+      statusCode: error.statusCode || null,
+      message: error.message || String(error),
+      timestamp: Date.now()
+    };
+
+    // 根据错误类型设置状态
+    if (error.statusCode === 429) {
+      stats.status = 'rate_limited';
+
+      // 记录冷却时间（从错误响应中提取）
+      // 注意：error.retryAfter 已经是毫秒为单位
+      if (error.retryAfter && typeof error.retryAfter === 'number') {
+        stats.cooldownUntil = Date.now() + error.retryAfter;
+      } else {
+        // 如果没有提供冷却时间，默认使用基础延迟
+        stats.cooldownUntil = Date.now() + 2000; // 默认 2 秒
+      }
+    } else if (error.statusCode === 401 || error.statusCode === 403) {
+      stats.status = 'disabled';
+      stats.cooldownUntil = null; // 被禁用的 token 不需要冷却时间
+    } else {
+      // 其他错误，清除冷却时间
+      stats.cooldownUntil = null;
+    }
+  }
+
+  /**
+   * 记录 token 刷新
+   */
+  recordRefresh(token) {
+    if (!token) return;
+    const stats = this.initStats(token);
+    if (!stats) return;
+
+    stats.refreshCount++;
   }
 
   /**
@@ -31,6 +123,7 @@ class TokenManager {
    * 使用 refresh_token 作为键，因为 access_token 会在刷新时改变
    */
   getActiveCount(token) {
+    if (!token || !token.refresh_token) return 0;
     return this.activeRequests.get(token.refresh_token) || 0;
   }
 
@@ -38,6 +131,7 @@ class TokenManager {
    * 增加 token 的活跃请求计数
    */
   incrementActive(token) {
+    if (!token || !token.refresh_token) return;
     const current = this.getActiveCount(token);
     this.activeRequests.set(token.refresh_token, current + 1);
   }
@@ -61,6 +155,93 @@ class TokenManager {
       index: i,
       active: this.getActiveCount(t)
     }));
+  }
+
+  /**
+   * 获取所有 token 的统计信息（用于监控界面）
+   */
+  getAllStats() {
+    const allTokens = [];
+
+    // 读取所有 token（包括已禁用的）
+    try {
+      const data = fs.readFileSync(this.filePath, 'utf8');
+      const tokenArray = JSON.parse(data);
+
+      tokenArray.forEach((token, index) => {
+        const stats = this.stats.get(token.refresh_token) || {
+          totalRequests: 0,
+          successCount: 0,
+          failureCount: 0,
+          lastUsedTime: null,
+          lastError: null,
+          refreshCount: 0,
+          status: token.enable === false ? 'disabled' : 'idle',
+          cooldownUntil: null
+        };
+
+        // 计算成功率
+        const successRate = stats.totalRequests > 0
+          ? ((stats.successCount / stats.totalRequests) * 100).toFixed(1)
+          : '0.0';
+
+        // 检查冷却是否已过期
+        const now = Date.now();
+        const isCoolingDown = stats.cooldownUntil && stats.cooldownUntil > now;
+        const cooldownRemaining = isCoolingDown ? stats.cooldownUntil - now : 0;
+
+        // 获取 token 状态（优先级：disabled > active > rate_limited > idle）
+        let status = stats.status;
+        if (token.enable === false) {
+          status = 'disabled';
+        } else if (this.getActiveCount(token) > 0) {
+          status = 'active';
+        } else if (isCoolingDown) {
+          // 正在冷却中，显示限流状态
+          status = 'rate_limited';
+        } else if (stats.status === 'rate_limited') {
+          // 冷却已过期，但状态还是 rate_limited，恢复为 idle
+          status = 'idle';
+        }
+
+        allTokens.push({
+          id: `token_${index}`,
+          index: index,
+          // 隐藏敏感信息，只显示部分
+          tokenPreview: token.refresh_token ? `${token.refresh_token.substring(0, 10)}...` : 'N/A',
+          enabled: token.enable !== false,
+          activeRequests: this.getActiveCount(token),
+          totalRequests: stats.totalRequests,
+          successCount: stats.successCount,
+          failureCount: stats.failureCount,
+          successRate: successRate,
+          refreshCount: stats.refreshCount,
+          lastUsedTime: stats.lastUsedTime,
+          lastError: stats.lastError,
+          status: status,
+          expiresAt: token.timestamp && token.expires_in
+            ? token.timestamp + (token.expires_in * 1000)
+            : null,
+          cooldownUntil: stats.cooldownUntil, // 冷却结束时间戳
+          cooldownRemaining: cooldownRemaining // 剩余冷却时间（毫秒）
+        });
+      });
+    } catch (error) {
+      log.error('读取统计信息失败:', error.message);
+    }
+
+    return {
+      tokens: allTokens,
+      summary: {
+        total: allTokens.length,
+        enabled: allTokens.filter(t => t.enabled).length,
+        disabled: allTokens.filter(t => !t.enabled).length,
+        active: allTokens.filter(t => t.activeRequests > 0).length,
+        totalRequests: allTokens.reduce((sum, t) => sum + t.totalRequests, 0),
+        totalSuccess: allTokens.reduce((sum, t) => sum + t.successCount, 0),
+        totalFailure: allTokens.reduce((sum, t) => sum + t.failureCount, 0)
+      }
+    };
   }
 
   loadTokens() {
@@ -120,6 +301,7 @@ class TokenManager {
       token.access_token = data.access_token;
       token.expires_in = data.expires_in;
       token.timestamp = Date.now();
+      this.recordRefresh(token); // 记录刷新
       this.saveToFile();
       return token;
     } else {

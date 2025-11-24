@@ -4,6 +4,12 @@ import { generateRequestBody } from '../utils/utils.js';
 import logger from '../utils/logger.js';
 import config from '../config/config.js';
 import { concurrencyLimiter, getQueueStatus } from '../middleware/concurrency.js';
+import tokenManager from '../auth/token_manager.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 
@@ -62,6 +68,20 @@ app.get('/health', (req, res) => {
     }
   });
 });
+
+// Token 统计信息端点（用于监控界面）
+app.get('/api/stats', (req, res) => {
+  try {
+    const stats = tokenManager.getAllStats();
+    res.json(stats);
+  } catch (error) {
+    logger.error('获取统计信息失败:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 提供静态文件服务（监控界面）
+app.use(express.static(path.join(__dirname, '../../public')));
 
 // 应用并发控制中间件到 chat completions 端点
 app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {

@@ -29,6 +29,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
   } catch (networkError) {
     // 网络错误（连接超时、网络中断等）- 释放当前 token
     tokenManager.releaseToken(token);
+    tokenManager.recordFailure(token, { message: networkError.message, isNetworkError: true });
     if (retryCount < maxRetries) {
       const waitTime = baseDelay * (retryCount + 1);
       logger.warn(`网络错误(${networkError.message})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
@@ -42,17 +43,52 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
     const errorText = await response.text();
     const statusCode = response.status;
     const retryAfter = response.headers.get('retry-after');
-    const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : null;
+    let retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : null;
+
+    // 尝试从错误响应中提取冷却时间（Google API 格式）
+    if (statusCode === 429 && !retryAfterMs) {
+      try {
+        const errorJson = JSON.parse(errorText);
+
+        // 方法1：从 RetryInfo 中获取 retryDelay（格式: "1514.089089842s"）
+        const retryInfo = errorJson?.error?.details?.find(d => d['@type'] === 'type.googleapis.com/google.rpc.RetryInfo');
+        if (retryInfo?.retryDelay) {
+          const match = retryInfo.retryDelay.match(/([\d.]+)s/);
+          if (match) {
+            const seconds = parseFloat(match[1]);
+            retryAfterMs = seconds * 1000;
+          }
+        }
+
+        // 方法2：从 ErrorInfo 的 metadata 中获取 quotaResetDelay（格式: "25m14.089089842s"）
+        if (!retryAfterMs) {
+          const errorInfo = errorJson?.error?.details?.find(d => d['@type'] === 'type.googleapis.com/google.rpc.ErrorInfo');
+          const quotaResetDelay = errorInfo?.metadata?.quotaResetDelay;
+          if (quotaResetDelay) {
+            const match = quotaResetDelay.match(/(\d+)m([\d.]+)s/);
+            if (match) {
+              const minutes = parseInt(match[1]);
+              const seconds = parseFloat(match[2]);
+              retryAfterMs = (minutes * 60 + seconds) * 1000;
+            }
+          }
+        }
+      } catch (e) {
+        // 忽略 JSON 解析错误
+      }
+    }
 
     // 释放当前 token
     tokenManager.releaseToken(token);
 
     // 根据状态码分类处理
     if (statusCode === 401 || statusCode === 403) {
+      tokenManager.recordFailure(token, { statusCode, message: errorText });
       tokenManager.disableCurrentToken(token);
       throw new Error(`账号认证失败(${statusCode})，已自动禁用。错误详情: ${errorText}`);
     } else if (statusCode === 429) {
       // 429 限流 - 切换 token 重试
+      tokenManager.recordFailure(token, { statusCode, message: errorText, retryAfter: retryAfterMs });
       if (retryCount < maxRetries) {
         const waitTime = retryAfterMs || baseDelay;
         logger.warn(`请求限流(429)，等待 ${Math.round(waitTime / 1000)}秒 后切换token重试 (${retryCount + 1}/${maxRetries})`);
@@ -62,6 +98,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       throw new Error(`请求过于频繁(429)，重试次数已耗尽。错误详情: ${errorText}`);
     } else if (statusCode >= 500 && statusCode < 600) {
       // 5xx 服务器错误 - 等待后重试
+      tokenManager.recordFailure(token, { statusCode, message: errorText });
       if (retryCount < maxRetries) {
         const waitTime = baseDelay * (retryCount + 1); // 递增等待时间
         logger.warn(`服务器错误(${statusCode})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
@@ -70,12 +107,14 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       }
       throw new Error(`服务器错误(${statusCode})，重试次数已耗尽。错误详情: ${errorText}`);
     } else {
+      tokenManager.recordFailure(token, { statusCode, message: errorText });
       throw new Error(`API请求失败 (${statusCode}): ${errorText}`);
     }
   }
 
   logger.debug('开始处理响应流...');
 
+  let streamSuccess = false; // 标记流是否成功处理完成
   try {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -232,6 +271,15 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
     callback({ type: outputType, content: textBuffer });
     textBuffer = '';
   }
+
+  // 成功完成请求，记录统计
+  streamSuccess = true;
+  tokenManager.recordSuccess(token);
+  } catch (streamError) {
+    // 流处理过程中的错误
+    logger.error('流处理失败:', streamError.message);
+    tokenManager.recordFailure(token, { message: streamError.message, isStreamError: true });
+    throw streamError; // 重新抛出错误
   } finally {
     // 请求完成，释放 token（确保无论成功或异常都会释放）
     tokenManager.releaseToken(token);

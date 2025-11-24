@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Token 使用监控 - Antigravity2API</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Helvetica', 'Arial', sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+      color: #333;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      color: white;
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    }
+
+    .header p {
+      font-size: 1rem;
+      opacity: 0.9;
+    }
+
+    .summary-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+    }
+
+    .card-title {
+      font-size: 0.875rem;
+      color: #666;
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .card-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #667eea;
+    }
+
+    .card-subtitle {
+      font-size: 0.875rem;
+      color: #999;
+      margin-top: 4px;
+    }
+
+    .tokens-section {
+      background: white;
+      border-radius: 12px;
+      padding: 25px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .section-title {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .refresh-info {
+      font-size: 0.875rem;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .refresh-btn {
+      padding: 8px 16px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: background 0.2s;
+    }
+
+    .refresh-btn:hover {
+      background: #5568d3;
+    }
+
+    .refresh-btn:active {
+      transform: scale(0.98);
+    }
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    th {
+      background: #f8f9fa;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      color: #555;
+      border-bottom: 2px solid #e9ecef;
+      white-space: nowrap;
+    }
+
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #e9ecef;
+    }
+
+    tr:hover {
+      background: #f8f9fa;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .status-idle {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+
+    .status-active {
+      background: #e8f5e9;
+      color: #388e3c;
+    }
+
+    .status-rate_limited {
+      background: #fff3e0;
+      color: #f57c00;
+    }
+
+    .status-disabled {
+      background: #ffebee;
+      color: #d32f2f;
+    }
+
+    .enabled-yes {
+      color: #388e3c;
+      font-weight: 600;
+    }
+
+    .enabled-no {
+      color: #d32f2f;
+      font-weight: 600;
+    }
+
+    .success-rate {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rate-bar {
+      flex: 1;
+      height: 6px;
+      background: #e9ecef;
+      border-radius: 3px;
+      overflow: hidden;
+      max-width: 100px;
+    }
+
+    .rate-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #388e3c, #66bb6a);
+      transition: width 0.3s;
+    }
+
+    .rate-text {
+      font-weight: 600;
+      min-width: 45px;
+    }
+
+    .time-text {
+      color: #666;
+      font-size: 0.8125rem;
+    }
+
+    .error-text {
+      color: #d32f2f;
+      font-size: 0.8125rem;
+      max-width: 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(102, 126, 234, 0.2);
+      border-top-color: #667eea;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #999;
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 16px;
+      opacity: 0.5;
+    }
+
+    @media (max-width: 768px) {
+      .header h1 {
+        font-size: 1.75rem;
+      }
+
+      .summary-cards {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .card-value {
+        font-size: 1.5rem;
+      }
+
+      table {
+        font-size: 0.75rem;
+      }
+
+      th, td {
+        padding: 8px 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Token 使用监控</h1>
+      <p>实时查看 API Token 的使用情况和统计信息</p>
+    </div>
+
+    <div class="summary-cards" id="summaryCards">
+      <div class="card">
+        <div class="card-title">总 Token 数</div>
+        <div class="card-value" id="totalTokens">-</div>
+        <div class="card-subtitle">所有 Token</div>
+      </div>
+      <div class="card">
+        <div class="card-title">可用 Token</div>
+        <div class="card-value" id="enabledTokens">-</div>
+        <div class="card-subtitle">正常运行中</div>
+      </div>
+      <div class="card">
+        <div class="card-title">活跃请求</div>
+        <div class="card-value" id="activeTokens">-</div>
+        <div class="card-subtitle">正在处理</div>
+      </div>
+      <div class="card">
+        <div class="card-title">总请求数</div>
+        <div class="card-value" id="totalRequests">-</div>
+        <div class="card-subtitle">累计请求</div>
+      </div>
+      <div class="card">
+        <div class="card-title">成功请求</div>
+        <div class="card-value" id="successRequests" style="color: #388e3c;">-</div>
+        <div class="card-subtitle">成功完成</div>
+      </div>
+      <div class="card">
+        <div class="card-title">失败请求</div>
+        <div class="card-value" id="failureRequests" style="color: #d32f2f;">-</div>
+        <div class="card-subtitle">请求失败</div>
+      </div>
+    </div>
+
+    <div class="tokens-section">
+      <div class="section-header">
+        <h2 class="section-title">Token 详细信息</h2>
+        <div class="refresh-info">
+          <span id="lastUpdate">-</span>
+          <button class="refresh-btn" onclick="loadStats()">刷新</button>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <div id="loading" class="loading">
+          <div class="spinner"></div>
+          <p style="margin-top: 16px;">加载中...</p>
+        </div>
+        <table id="tokensTable" style="display: none;">
+          <thead>
+            <tr>
+              <th>序号</th>
+              <th>Token</th>
+              <th>状态</th>
+              <th>启用</th>
+              <th>活跃请求</th>
+              <th>总请求</th>
+              <th>成功</th>
+              <th>失败</th>
+              <th>成功率</th>
+              <th>刷新次数</th>
+              <th>最后使用</th>
+              <th>冷却时间</th>
+              <th>最后错误</th>
+            </tr>
+          </thead>
+          <tbody id="tokensBody">
+          </tbody>
+        </table>
+        <div id="emptyState" class="empty-state" style="display: none;">
+          <div class="empty-state-icon">📊</div>
+          <p>暂无 Token 数据</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let autoRefreshInterval;
+
+    // 格式化时间
+    function formatTime(timestamp) {
+      if (!timestamp) return '-';
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diff = now - date;
+
+      if (diff < 60000) return '刚刚';
+      if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`;
+      if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
+
+      return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
+    // 格式化错误信息
+    function formatError(error) {
+      if (!error) return '-';
+      const statusCode = error.statusCode ? `[${error.statusCode}] ` : '';
+      const message = error.message || String(error);
+      const shortMessage = message.length > 50 ? message.substring(0, 50) + '...' : message;
+      return `${statusCode}${shortMessage}`;
+    }
+
+    // 格式化冷却时间
+    function formatCooldown(cooldownRemaining) {
+      if (!cooldownRemaining || cooldownRemaining <= 0) return '-';
+
+      const seconds = Math.ceil(cooldownRemaining / 1000);
+      if (seconds < 60) return `${seconds}秒`;
+
+      const minutes = Math.floor(seconds / 60);
+      const remainingSeconds = seconds % 60;
+      if (minutes < 60) {
+        return remainingSeconds > 0 ? `${minutes}分${remainingSeconds}秒` : `${minutes}分`;
+      }
+
+      const hours = Math.floor(minutes / 60);
+      const remainingMinutes = minutes % 60;
+      return remainingMinutes > 0 ? `${hours}小时${remainingMinutes}分` : `${hours}小时`;
+    }
+
+    // 获取状态的 CSS 类
+    function getStatusClass(status) {
+      return `status-${status}`;
+    }
+
+    // 获取状态显示文本
+    function getStatusText(status) {
+      const statusMap = {
+        'idle': '空闲',
+        'active': '活跃',
+        'rate_limited': '限流',
+        'disabled': '禁用'
+      };
+      return statusMap[status] || status;
+    }
+
+    // 加载统计数据
+    async function loadStats() {
+      try {
+        const response = await fetch('/api/stats');
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+
+        // 更新总览卡片
+        document.getElementById('totalTokens').textContent = data.summary.total;
+        document.getElementById('enabledTokens').textContent = data.summary.enabled;
+        document.getElementById('activeTokens').textContent = data.summary.active;
+        document.getElementById('totalRequests').textContent = data.summary.totalRequests;
+        document.getElementById('successRequests').textContent = data.summary.totalSuccess;
+        document.getElementById('failureRequests').textContent = data.summary.totalFailure;
+
+        // 更新 Token 列表
+        const tbody = document.getElementById('tokensBody');
+        tbody.innerHTML = '';
+
+        if (data.tokens.length === 0) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('tokensTable').style.display = 'none';
+          document.getElementById('emptyState').style.display = 'block';
+        } else {
+          data.tokens.forEach(token => {
+            const row = document.createElement('tr');
+
+            const successRate = parseFloat(token.successRate);
+            const rateColor = successRate >= 90 ? '#388e3c' : successRate >= 70 ? '#f57c00' : '#d32f2f';
+
+            // 冷却时间显示
+            const cooldownText = formatCooldown(token.cooldownRemaining);
+            const cooldownStyle = token.cooldownRemaining > 0
+              ? 'color: #f57c00; font-weight: 600;'
+              : '';
+
+            row.innerHTML = `
+              <td>${token.index + 1}</td>
+              <td><code style="font-size: 0.8125rem;">${token.tokenPreview}</code></td>
+              <td><span class="status-badge ${getStatusClass(token.status)}">${getStatusText(token.status)}</span></td>
+              <td><span class="${token.enabled ? 'enabled-yes' : 'enabled-no'}">${token.enabled ? '是' : '否'}</span></td>
+              <td>${token.activeRequests}</td>
+              <td>${token.totalRequests}</td>
+              <td style="color: #388e3c;">${token.successCount}</td>
+              <td style="color: #d32f2f;">${token.failureCount}</td>
+              <td>
+                <div class="success-rate">
+                  <div class="rate-bar">
+                    <div class="rate-fill" style="width: ${successRate}%; background: ${rateColor};"></div>
+                  </div>
+                  <span class="rate-text" style="color: ${rateColor};">${token.successRate}%</span>
+                </div>
+              </td>
+              <td>${token.refreshCount}</td>
+              <td class="time-text">${formatTime(token.lastUsedTime)}</td>
+              <td class="time-text" style="${cooldownStyle}">${cooldownText}</td>
+              <td class="error-text" title="${token.lastError ? JSON.stringify(token.lastError) : ''}">${formatError(token.lastError)}</td>
+            `;
+
+            tbody.appendChild(row);
+          });
+
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('tokensTable').style.display = 'table';
+          document.getElementById('emptyState').style.display = 'none';
+        }
+
+        // 更新最后刷新时间
+        document.getElementById('lastUpdate').textContent = `最后更新: ${new Date().toLocaleTimeString('zh-CN')}`;
+      } catch (error) {
+        console.error('加载统计数据失败:', error);
+        document.getElementById('loading').innerHTML = `
+          <p style="color: #d32f2f;">加载失败: ${error.message}</p>
+          <button class="refresh-btn" onclick="loadStats()" style="margin-top: 16px;">重试</button>
+        `;
+      }
+    }
+
+    // 启动自动刷新
+    function startAutoRefresh() {
+      // 每 3 秒刷新一次
+      autoRefreshInterval = setInterval(loadStats, 3000);
+    }
+
+    // 页面加载时初始化
+    window.addEventListener('DOMContentLoaded', () => {
+      loadStats();
+      startAutoRefresh();
+    });
+
+    // 页面可见性改变时控制自动刷新
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        clearInterval(autoRefreshInterval);
+      } else {
+        loadStats();
+        startAutoRefresh();
+      }
+    });
+  </script>
+</body>
+</html>
