@@ -3,9 +3,11 @@ version: '3.8'
 services:
   antigravity-api:
     # 使用预构建镜像（推荐）
-    image: ghcr.io/xiaoshi569/antigravity2api:latest
-    # 或本地构建（需要源码）
-    # build: .
+    # image: ghcr.io/xiaoshi569/antigravity2api:latest
+    # 本地构建（直接从 GitHub 拉取源码构建）
+    build:
+      context: https://github.com/xiaoshi569/antigravity2api-nodejs.git#main
+      dockerfile: Dockerfile
 
     container_name: antigravity-api
 
