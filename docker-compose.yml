@@ -2,17 +2,61 @@ version: '3.8'
 
 services:
   antigravity-api:
-    build: .
+    # 使用预构建镜像（推荐）
+    image: ghcr.io/xiaoshi569/antigravity2api:latest
+    # 或本地构建（需要源码）
+    # build: .
+
     container_name: antigravity-api
+
+    # 端口映射：宿主机端口:容器端口
+    # 修改宿主机端口（冒号前）来改变外部访问端口
     ports:
-      - "8045:8045"
+      - "1562:1562"
+
+    # 数据卷挂载
     volumes:
-      # 挂载 data 目录用于持久化 accounts.json
+      # 持久化 accounts.json（token 数据）
       - ./data:/usr/src/app/data
-      # 挂载配置文件（只读），可以在宿主机上修改配置而不需要重新构建镜像
+      # 配置文件（只读），修改后需重启容器
       - ./config.json:/usr/src/app/config.json:ro
+
+    # 自动重启策略
+    # no: 不自动重启
+    # always: 总是重启
+    # on-failure: 仅失败时重启
+    # unless-stopped: 除非手动停止，否则总是重启（推荐）
     restart: unless-stopped
+
     # 以 root 用户运行，避免权限问题
     user: "0:0"
+
+    # 环境变量
     environment:
       - NODE_ENV=production
+      - TZ=Asia/Shanghai  # 设置时区
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:1562/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s          # 每 30 秒检查一次
+      timeout: 10s           # 超时时间
+      retries: 3             # 失败 3 次标记为 unhealthy
+      start_period: 40s      # 启动后 40 秒开始检查
+
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # 单个日志文件最大 10MB
+        max-file: "3"        # 保留最近 3 个日志文件
+
+    # 资源限制（可选）
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'        # 最多使用 2 个 CPU 核心
+          memory: 1G         # 最大内存 1GB
+        reservations:
+          cpus: '0.5'        # 至少保留 0.5 个核心
+          memory: 256M       # 至少保留 256MB 内存
