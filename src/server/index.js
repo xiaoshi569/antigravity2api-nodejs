@@ -68,11 +68,25 @@ app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
   // OpenAI API 默认 stream = false
   const { messages, model, stream = false, tools, ...params} = req.body;
   try {
-    
+    // 记录请求体中的异常字段，用于调试 newapi 转发问题
+    if (messages) {
+      messages.forEach((msg, idx) => {
+        if (msg.tool_calls && typeof msg.tool_calls === 'string') {
+          logger.warn(`⚠ 消息 [${idx}] tool_calls 是字符串: "${msg.tool_calls}"`);
+        }
+        if (msg.tools && typeof msg.tools === 'string') {
+          logger.warn(`⚠ 消息 [${idx}] tools 是字符串: "${msg.tools}"`);
+        }
+      });
+    }
+    if (tools && typeof tools === 'string') {
+      logger.warn(`⚠ 请求的 tools 字段是字符串: "${tools}"`);
+    }
+
     if (!messages) {
       return res.status(400).json({ error: 'messages is required' });
     }
-    
+
     const requestBody = generateRequestBody(messages, model, params, tools);
     //console.log(JSON.stringify(requestBody,null,2));
     

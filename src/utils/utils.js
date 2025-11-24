@@ -66,31 +66,39 @@ function handleUserMessage(extracted, antigravityMessages){
 }
 function handleAssistantMessage(message, antigravityMessages){
   const lastMessage = antigravityMessages[antigravityMessages.length - 1];
-  const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
+  const hasToolCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
   const hasContent = message.content && message.content.trim() !== '';
 
-  const antigravityTools = hasToolCalls ? message.tool_calls.map(toolCall => {
-    // 解析编码的 id，格式: id::thought_signature
-    // 只分割第一个 ::，避免 thought_signature 中包含 :: 导致分割错误
-    const separatorIndex = toolCall.id.indexOf('::');
-    const [baseId, thoughtSignature] = separatorIndex !== -1
-      ? [toolCall.id.substring(0, separatorIndex), toolCall.id.substring(separatorIndex + 2)]
-      : [toolCall.id, null];
+  const antigravityTools = hasToolCalls ? message.tool_calls
+    .filter((toolCall, idx) => {
+      if (!toolCall || !toolCall.id || !toolCall.function) {
+        console.warn(`⚠ 跳过无效的 tool_call [${idx}]:`, JSON.stringify(toolCall));
+        return false;
+      }
+      return true;
+    })
+    .map(toolCall => {
+      // 解析编码的 id，格式: id::thought_signature
+      // 只分割第一个 ::，避免 thought_signature 中包含 :: 导致分割错误
+      const separatorIndex = toolCall.id.indexOf('::');
+      const [baseId, thoughtSignature] = separatorIndex !== -1
+        ? [toolCall.id.substring(0, separatorIndex), toolCall.id.substring(separatorIndex + 2)]
+        : [toolCall.id, null];
 
-    const functionCall = {
-      id: baseId,
-      name: toolCall.function.name,
-      args: {
-        query: toolCall.function.arguments
-      },
-      // Gemini API 强制要求 thought_signature，即使为空也必须提供
-      thoughtSignature: thoughtSignature || ''
-    };
+      const functionCall = {
+        id: baseId,
+        name: toolCall.function.name || 'unknown',
+        args: {
+          query: toolCall.function.arguments || '{}'
+        },
+        // Gemini API 强制要求 thought_signature，即使为空也必须提供
+        thoughtSignature: thoughtSignature || ''
+      };
 
-    return { functionCall };
-  }) : [];
+      return { functionCall };
+    }) : [];
   
-  if (lastMessage?.role === "model" && hasToolCalls && !hasContent){
+  if (lastMessage?.role === "model" && hasToolCalls && !hasContent && Array.isArray(lastMessage.parts)){
     lastMessage.parts.push(...antigravityTools)
   }else{
     const parts = [];
@@ -104,6 +112,12 @@ function handleAssistantMessage(message, antigravityMessages){
   }
 }
 function handleToolCall(message, antigravityMessages){
+  // 验证 tool_call_id 存在，缺失则跳过
+  if (!message || !message.tool_call_id) {
+    console.warn('⚠ 跳过无效的 tool 消息: missing tool_call_id', JSON.stringify(message));
+    return;
+  }
+
   // 解析 tool_call_id，提取 baseId（去掉 thought_signature 部分）
   // 只提取第一个 :: 之前的部分作为 baseId
   const separatorIndex = message.tool_call_id.indexOf('::');
@@ -139,7 +153,7 @@ function handleToolCall(message, antigravityMessages){
   };
   
   // 如果上一条消息是 user 且包含 functionResponse，则合并
-  if (lastMessage?.role === "user" && lastMessage.parts.some(p => p.functionResponse)) {
+  if (lastMessage?.role === "user" && Array.isArray(lastMessage.parts) && lastMessage.parts.some(p => p.functionResponse)) {
     lastMessage.parts.push(functionResponse);
   } else {
     antigravityMessages.push({
@@ -182,8 +196,8 @@ function extractSystemPrompt(openaiMessages) {
     } else if (Array.isArray(systemMessage.content)) {
       // 多模态格式，只提取文本部分
       return systemMessage.content
-        .filter(item => item.type === 'text')
-        .map(item => item.text)
+        .filter(item => item && item.type === 'text')
+        .map(item => item.text || '')
         .join('');
     }
   }
@@ -214,22 +228,32 @@ function generateGenerationConfig(parameters, enableThinking, actualModelName){
   return generationConfig
 }
 function convertOpenAIToolsToAntigravity(openaiTools){
-  if (!openaiTools || openaiTools.length === 0) return [];
-  return openaiTools.map((tool)=>{
-    // 安全地删除 $schema 字段
-    if (tool.function?.parameters?.$schema) {
-      delete tool.function.parameters.$schema;
-    }
-    return {
-      functionDeclarations: [
-        {
-          name: tool.function.name,
-          description: tool.function.description,
-          parameters: tool.function.parameters || {}
-        }
-      ]
-    }
-  })
+  if (!openaiTools || !Array.isArray(openaiTools) || openaiTools.length === 0) return [];
+
+  // 过滤掉无效的 tool，记录警告但不抛出错误
+  return openaiTools
+    .filter((tool, idx) => {
+      if (!tool || !tool.function) {
+        console.warn(`⚠ 跳过无效的 tool [${idx}]:`, JSON.stringify(tool));
+        return false;
+      }
+      return true;
+    })
+    .map((tool)=>{
+      // 安全地删除 $schema 字段
+      if (tool.function?.parameters?.$schema) {
+        delete tool.function.parameters.$schema;
+      }
+      return {
+        functionDeclarations: [
+          {
+            name: tool.function.name || 'unknown_function',
+            description: tool.function.description || '',
+            parameters: tool.function.parameters || {}
+          }
+        ]
+      }
+    })
 }
 function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
   const enableThinking = modelName.endsWith('-thinking') ||

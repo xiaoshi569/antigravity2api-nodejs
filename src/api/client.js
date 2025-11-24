@@ -202,8 +202,8 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
                 id: encodedId,
                 type: 'function',
                 function: {
-                  name: part.functionCall.name,
-                  arguments: JSON.stringify(part.functionCall.args)
+                  name: part.functionCall.name || 'unknown',
+                  arguments: JSON.stringify(part.functionCall.args || {})
                 }
               });
             }
