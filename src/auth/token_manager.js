@@ -15,7 +15,52 @@ class TokenManager {
     this.tokens = [];
     this.currentIndex = 0;
     this.maxRetries = 3; // 最大重试次数
+    this.activeRequests = new Map(); // 跟踪每个 token 的活跃请求数
     this.loadTokens();
+  }
+
+  /**
+   * 获取可用 token 数量
+   */
+  getTokenCount() {
+    return this.tokens.length;
+  }
+
+  /**
+   * 获取 token 的活跃请求数
+   * 使用 refresh_token 作为键，因为 access_token 会在刷新时改变
+   */
+  getActiveCount(token) {
+    return this.activeRequests.get(token.refresh_token) || 0;
+  }
+
+  /**
+   * 增加 token 的活跃请求计数
+   */
+  incrementActive(token) {
+    const current = this.getActiveCount(token);
+    this.activeRequests.set(token.refresh_token, current + 1);
+  }
+
+  /**
+   * 释放 token（请求完成后调用）
+   */
+  releaseToken(token) {
+    if (!token || !token.refresh_token) return;
+    const current = this.getActiveCount(token);
+    if (current > 0) {
+      this.activeRequests.set(token.refresh_token, current - 1);
+    }
+  }
+
+  /**
+   * 获取所有 token 的负载状态
+   */
+  getLoadStatus() {
+    return this.tokens.map((t, i) => ({
+      index: i,
+      active: this.getActiveCount(t)
+    }));
   }
 
   loadTokens() {
@@ -162,28 +207,46 @@ class TokenManager {
 
     // 记录初始token数量，避免循环中数组变化导致问题
     const initialLength = this.tokens.length;
+    // 跟踪本次请求中已尝试失败的 token
+    const triedTokens = new Set();
 
     for (let i = 0; i < initialLength; i++) {
       // 检查是否还有可用token
       if (this.tokens.length === 0) return null;
 
-      // 确保 currentIndex 在有效范围内
-      if (this.currentIndex >= this.tokens.length) {
-        this.currentIndex = 0;
+      // 智能分配：选择负载最低的 token（排除已尝试失败的）
+      let selectedToken = null;
+      let minActive = Infinity;
+
+      for (const t of this.tokens) {
+        if (triedTokens.has(t.refresh_token)) continue;
+        const active = this.getActiveCount(t);
+        if (active < minActive) {
+          minActive = active;
+          selectedToken = t;
+        }
       }
 
-      const token = this.tokens[this.currentIndex];
+      if (!selectedToken) {
+        // 所有 token 都尝试过了
+        return null;
+      }
+
+      const token = selectedToken;
 
       try {
         if (this.isExpired(token)) {
           await this.refreshToken(token);
         }
-        // 成功获取token，移动到下一个索引
-        this.currentIndex = (this.currentIndex + 1) % this.tokens.length;
+        // 成功获取token，增加活跃计数
+        this.incrementActive(token);
         return token;
       } catch (error) {
+        // 标记此 token 已尝试失败
+        triedTokens.add(token.refresh_token);
+
         const statusCode = error.statusCode;
-        const tokenIndex = this.currentIndex;
+        const tokenIndex = this.tokens.indexOf(token);
 
         // 根据状态码分类处理
         if (error.isNetworkError) {

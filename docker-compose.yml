@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  antigravity-api:
+    build: .
+    container_name: antigravity-api
+    ports:
+      - "8045:8045"
+    volumes:
+      # 挂载 data 目录用于持久化 accounts.json
+      - ./data:/usr/src/app/data
+      # 挂载配置文件（只读），可以在宿主机上修改配置而不需要重新构建镜像
+      - ./config.json:/usr/src/app/config.json:ro
+    restart: unless-stopped
+    # 以 root 用户运行，避免权限问题
+    user: "0:0"
+    environment:
+      - NODE_ENV=production

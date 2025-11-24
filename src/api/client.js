@@ -27,7 +27,8 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       body: JSON.stringify(requestBody)
     });
   } catch (networkError) {
-    // 网络错误（连接超时、网络中断等）
+    // 网络错误（连接超时、网络中断等）- 释放当前 token
+    tokenManager.releaseToken(token);
     if (retryCount < maxRetries) {
       const waitTime = baseDelay * (retryCount + 1);
       logger.warn(`网络错误(${networkError.message})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
@@ -42,6 +43,9 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
     const statusCode = response.status;
     const retryAfter = response.headers.get('retry-after');
     const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : null;
+
+    // 释放当前 token
+    tokenManager.releaseToken(token);
 
     // 根据状态码分类处理
     if (statusCode === 401 || statusCode === 403) {
@@ -71,6 +75,8 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
   }
 
   logger.debug('开始处理响应流...');
+
+  try {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let thinkingMode = false;
@@ -226,6 +232,10 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
     callback({ type: outputType, content: textBuffer });
     textBuffer = '';
   }
+  } finally {
+    // 请求完成，释放 token（确保无论成功或异常都会释放）
+    tokenManager.releaseToken(token);
+  }
 }
 
 export async function getAvailableModels() {
@@ -235,37 +245,41 @@ export async function getAvailableModels() {
     throw new Error('没有可用的token，请运行 npm run login 获取token');
   }
 
-  const response = await fetch(config.api.modelsUrl, {
-    method: 'POST',
-    headers: {
-      'Host': config.api.host,
-      'User-Agent': config.api.userAgent,
-      'Authorization': `Bearer ${token.access_token}`,
-      'Content-Type': 'application/json',
-      'Accept-Encoding': 'gzip'
-    },
-    body: JSON.stringify({})
-  });
+  try {
+    const response = await fetch(config.api.modelsUrl, {
+      method: 'POST',
+      headers: {
+        'Host': config.api.host,
+        'User-Agent': config.api.userAgent,
+        'Authorization': `Bearer ${token.access_token}`,
+        'Content-Type': 'application/json',
+        'Accept-Encoding': 'gzip'
+      },
+      body: JSON.stringify({})
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`获取模型列表失败 (${response.status}): ${errorText}`);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`获取模型列表失败 (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    // 检查响应格式
+    if (!data.models || typeof data.models !== 'object') {
+      throw new Error('获取模型列表失败: 响应格式无效');
+    }
+
+    return {
+      object: 'list',
+      data: Object.keys(data.models).map(id => ({
+        id,
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'google'
+      }))
+    };
+  } finally {
+    tokenManager.releaseToken(token);
   }
-
-  const data = await response.json();
-
-  // 检查响应格式
-  if (!data.models || typeof data.models !== 'object') {
-    throw new Error('获取模型列表失败: 响应格式无效');
-  }
-
-  return {
-    object: 'list',
-    data: Object.keys(data.models).map(id => ({
-      id,
-      object: 'model',
-      created: Math.floor(Date.now() / 1000),
-      owned_by: 'google'
-    }))
-  };
 }

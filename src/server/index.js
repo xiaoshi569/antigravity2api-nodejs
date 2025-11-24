@@ -3,6 +3,7 @@ import { generateAssistantResponse, getAvailableModels } from '../api/client.js'
 import { generateRequestBody } from '../utils/utils.js';
 import logger from '../utils/logger.js';
 import config from '../config/config.js';
+import { concurrencyLimiter, getQueueStatus } from '../middleware/concurrency.js';
 
 const app = express();
 
@@ -48,7 +49,22 @@ app.get('/v1/models', async (req, res) => {
   }
 });
 
-app.post('/v1/chat/completions', async (req, res) => {
+// 健康检查和队列状态端点
+app.get('/health', (req, res) => {
+  const queueStatus = getQueueStatus();
+  res.json({
+    status: 'ok',
+    queue: queueStatus,
+    config: {
+      maxConcurrent: config.concurrency?.maxConcurrent || 10,
+      queueLimit: config.concurrency?.queueLimit || 100,
+      timeout: config.concurrency?.timeout || 300000
+    }
+  });
+});
+
+// 应用并发控制中间件到 chat completions 端点
+app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
   // OpenAI API 默认 stream = false
   const { messages, model, stream = false, tools, ...params} = req.body;
   try {

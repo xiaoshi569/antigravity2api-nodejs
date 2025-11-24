@@ -82,13 +82,10 @@ function handleAssistantMessage(message, antigravityMessages){
       name: toolCall.function.name,
       args: {
         query: toolCall.function.arguments
-      }
+      },
+      // Gemini API 强制要求 thought_signature，即使为空也必须提供
+      thoughtSignature: thoughtSignature || ''
     };
-
-    // 如果有 thought_signature，添加到 functionCall 中
-    if (thoughtSignature) {
-      functionCall.thoughtSignature = thoughtSignature;
-    }
 
     return { functionCall };
   }) : [];

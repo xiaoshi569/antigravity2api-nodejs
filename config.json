@@ -1,6 +1,6 @@
 {
   "server": {
-    "port": 8045,
+    "port": 1562,
     "host": "0.0.0.0"
   },
   "api": {
@@ -17,12 +17,19 @@
   },
   "security": {
     "maxRequestSize": "50mb",
-    "apiKey": "sk-text"
+    "apiKey": "keliang01"
   },
   "retry": {
     "maxRetries": 3,
     "baseDelay": 1000,
     "_comment": "maxRetries: 最大重试次数, baseDelay: 基础延迟(毫秒)"
+  },
+  "concurrency": {
+    "maxConcurrent": "auto",
+    "perTokenConcurrency": 2,
+    "queueLimit": 10,
+    "timeout": 300000,
+    "_comment": "maxConcurrent: 'auto'自动计算(token数×perTokenConcurrency)或固定数字, perTokenConcurrency: 每个token最大并发数"
   },
   "systemInstruction": "",
   "thinking": {

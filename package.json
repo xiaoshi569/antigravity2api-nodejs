@@ -10,11 +10,17 @@
     "dev": "node --watch src/server/index.js",
     "debug": "set DEBUG=true && node src/server/index.js"
   },
-  "keywords": ["antigravity", "openai", "api", "proxy"],
+  "keywords": [
+    "antigravity",
+    "openai",
+    "api",
+    "proxy"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "p-queue": "^9.0.1"
   },
   "engines": {
     "node": ">=18.0.0"
