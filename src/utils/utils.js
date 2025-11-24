@@ -216,13 +216,16 @@ function generateGenerationConfig(parameters, enableThinking, actualModelName){
 function convertOpenAIToolsToAntigravity(openaiTools){
   if (!openaiTools || openaiTools.length === 0) return [];
   return openaiTools.map((tool)=>{
-    delete tool.function.parameters.$schema;
+    // 安全地删除 $schema 字段
+    if (tool.function?.parameters?.$schema) {
+      delete tool.function.parameters.$schema;
+    }
     return {
       functionDeclarations: [
         {
           name: tool.function.name,
           description: tool.function.description,
-          parameters: tool.function.parameters
+          parameters: tool.function.parameters || {}
         }
       ]
     }
