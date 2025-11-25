@@ -1,6 +1,5 @@
 import express from 'express';
 import { generateAssistantResponse, getAvailableModels } from '../api/client.js';
-import { generateRequestBody } from '../utils/utils.js';
 import logger from '../utils/logger.js';
 import config from '../config/config.js';
 import { concurrencyLimiter, getQueueStatus } from '../middleware/concurrency.js';
@@ -107,9 +106,9 @@ app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
       return res.status(400).json({ error: 'messages is required' });
     }
 
-    const requestBody = generateRequestBody(messages, model, params, tools);
-    //console.log(JSON.stringify(requestBody,null,2));
-    
+    // 直接传递OpenAI参数给generateAssistantResponse
+    // 它会在内部获取token并生成requestBody
+
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -118,10 +117,10 @@ app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
       const id = `chatcmpl-${Date.now()}`;
       const created = Math.floor(Date.now() / 1000);
       let hasToolCall = false;
-      
+
       const thinkingOutput = config.thinking?.output || 'filter';
 
-      await generateAssistantResponse(requestBody, (data) => {
+      await generateAssistantResponse(messages, model, params, tools, (data) => {
         if (data.type === 'tool_calls') {
           hasToolCall = true;
           res.write(`data: ${JSON.stringify({
@@ -180,7 +179,7 @@ app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
       let toolCalls = [];
       const thinkingOutput = config.thinking?.output || 'filter';
 
-      await generateAssistantResponse(requestBody, (data) => {
+      await generateAssistantResponse(messages, model, params, tools, (data) => {
         if (data.type === 'tool_calls') {
           toolCalls = data.tool_calls;
         } else if (data.type === 'text') {

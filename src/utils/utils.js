@@ -1,22 +1,5 @@
-import { randomUUID } from 'crypto';
 import config from '../config/config.js';
-
-function generateRequestId() {
-  return `agent-${randomUUID()}`;
-}
-
-function generateSessionId() {
-  return String(-Math.floor(Math.random() * 9e18));
-}
-
-function generateProjectId() {
-  const adjectives = ['useful', 'bright', 'swift', 'calm', 'bold'];
-  const nouns = ['fuze', 'wave', 'spark', 'flow', 'core'];
-  const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
-  const randomNum = Math.random().toString(36).substring(2, 7);
-  return `${randomAdj}-${randomNoun}-${randomNum}`;
-}
+import { generateRequestId } from './idGenerator.js';
 function extractImagesFromContent(content) {
   const result = { text: '', images: [] };
 
@@ -255,7 +238,7 @@ function convertOpenAIToolsToAntigravity(openaiTools){
       }
     })
 }
-function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
+function generateRequestBody(openaiMessages, modelName, parameters, openaiTools, token) {
   const enableThinking = modelName.endsWith('-thinking') ||
     modelName === 'gemini-2.5-pro' ||
     modelName.startsWith('gemini-3-pro-') ||
@@ -267,9 +250,9 @@ function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
   const userSystemPrompt = extractSystemPrompt(openaiMessages);
   const systemPrompt = userSystemPrompt || config.systemInstruction;
 
-  return{
-    project: generateProjectId(),
-    requestId: generateRequestId(),
+  return {
+    project: token.projectId,        // 使用token的固定projectId（持久化）
+    requestId: generateRequestId(),  // 每次请求生成新的requestId
     request: {
       contents: openaiMessageToAntigravity(openaiMessages),
       systemInstruction: {
@@ -283,15 +266,12 @@ function generateRequestBody(openaiMessages,modelName,parameters,openaiTools){
         }
       },
       generationConfig: generateGenerationConfig(parameters, enableThinking, actualModelName),
-      sessionId: generateSessionId()
+      sessionId: token.sessionId       // 使用token的固定sessionId（内存中）
     },
     model: actualModelName,
     userAgent: "antigravity"
   }
 }
-export{
-  generateRequestId,
-  generateSessionId,
-  generateProjectId,
+export {
   generateRequestBody
 }

@@ -1,11 +1,15 @@
 import tokenManager from '../auth/token_manager.js';
 import config from '../config/config.js';
 import logger from '../utils/logger.js';
+import { generateRequestBody } from '../utils/utils.js';
 
-export async function generateAssistantResponse(requestBody, callback, retryCount = 0) {
+export async function generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount = 0) {
   const maxRetries = config.retry?.maxRetries ?? 3;
   const baseDelay = config.retry?.baseDelay ?? 1000;
   const token = await tokenManager.getToken(); // 如果没有可用token，会抛出带 statusCode 的错误
+
+  // 使用获取到的token生成requestBody（使用token的projectId和sessionId）
+  const requestBody = generateRequestBody(openaiMessages, modelName, parameters, openaiTools, token);
 
   const url = config.api.url;
 
@@ -29,7 +33,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       if (retryCount < maxRetries) {
         logger.warn(`网络错误(${networkError.message})，切换token重试 (${retryCount + 1}/${maxRetries})`);
         tokenManager.releaseToken(token); // 递归前释放
-        return generateAssistantResponse(requestBody, callback, retryCount + 1);
+        return generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount + 1);
       }
       // 重试耗尽，直接throw，外层finally会释放token
       throw new Error(`网络错误，重试次数已耗尽: ${networkError.message}`);
@@ -86,7 +90,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
         if (retryCount < maxRetries) {
           logger.warn(`请求限流(429)，切换token重试 (${retryCount + 1}/${maxRetries})`);
           tokenManager.releaseToken(token); // 递归前释放
-          return generateAssistantResponse(requestBody, callback, retryCount + 1);
+          return generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount + 1);
         }
         // 重试耗尽，直接throw，外层finally会释放token
         throw new Error(`请求过于频繁(429)，重试次数已耗尽。错误详情: ${errorText}`);
@@ -96,7 +100,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
         if (retryCount < maxRetries) {
           logger.warn(`服务器错误(${statusCode})，切换token重试 (${retryCount + 1}/${maxRetries})`);
           tokenManager.releaseToken(token); // 递归前释放
-          return generateAssistantResponse(requestBody, callback, retryCount + 1);
+          return generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount + 1);
         }
         // 重试耗尽，直接throw，外层finally会释放token
         throw new Error(`服务器错误(${statusCode})，重试次数已耗尽。错误详情: ${errorText}`);

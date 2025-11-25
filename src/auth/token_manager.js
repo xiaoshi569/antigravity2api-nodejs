@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { log } from '../utils/logger.js';
 import config from '../config/config.js';
+import { generateProjectId, generateSessionId } from '../utils/idGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -257,8 +258,35 @@ class TokenManager {
     try {
       log.info('正在加载token...');
       const data = fs.readFileSync(this.filePath, 'utf8');
-      const tokenArray = JSON.parse(data);
-      this.tokens = tokenArray.filter(token => token.enable !== false);
+      let tokenArray = JSON.parse(data);
+      let needSave = false;
+
+      // 为每个token添加projectId（如果没有）
+      // projectId会持久化到accounts.json，确保每个token有固定的项目ID
+      tokenArray = tokenArray.map(token => {
+        if (!token.projectId) {
+          token.projectId = generateProjectId();
+          needSave = true;
+          log.info(`为token生成projectId: ${token.projectId}`);
+        }
+        return token;
+      });
+
+      // 如果有新生成的projectId，保存到文件
+      if (needSave) {
+        fs.writeFileSync(this.filePath, JSON.stringify(tokenArray, null, 2), 'utf8');
+        log.info('已保存projectId到accounts.json');
+      }
+
+      // 过滤启用的token，并为每个token生成sessionId（内存中）
+      // sessionId每次启动时重新生成，不持久化
+      this.tokens = tokenArray
+        .filter(token => token.enable !== false)
+        .map(token => ({
+          ...token,
+          sessionId: generateSessionId() // 每次启动生成新的sessionId
+        }));
+
       this.currentIndex = 0;
       log.info(`成功加载 ${this.tokens.length} 个可用token`);
     } catch (error) {
@@ -374,12 +402,16 @@ class TokenManager {
     try {
       const data = fs.readFileSync(this.filePath, 'utf8');
       const allTokens = JSON.parse(data);
-      
+
       this.tokens.forEach(memToken => {
         const index = allTokens.findIndex(t => t.refresh_token === memToken.refresh_token);
-        if (index !== -1) allTokens[index] = memToken;
+        if (index !== -1) {
+          // 从内存token中排除sessionId（不持久化到文件）
+          const { sessionId, ...tokenToSave } = memToken;
+          allTokens[index] = tokenToSave;
+        }
       });
-      
+
       fs.writeFileSync(this.filePath, JSON.stringify(allTokens, null, 2), 'utf8');
     } catch (error) {
       log.error('保存文件失败:', error.message);
