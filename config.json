@@ -26,8 +26,8 @@
   },
   "concurrency": {
     "maxConcurrent": "auto",
-    "perTokenConcurrency": 1,
-    "queueLimit": 10,
+    "perTokenConcurrency": 2,
+    "queueLimit": 5,
     "timeout": 300000,
     "_comment": "maxConcurrent: 'auto'自动计算(token数×perTokenConcurrency)或固定数字, perTokenConcurrency: 每个token最大并发数"
   },

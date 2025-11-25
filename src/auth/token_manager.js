@@ -480,14 +480,22 @@ class TokenManager {
 
       const token = selectedToken;
 
+      // 立即增加活跃计数，防止并发请求选择同一个 token
+      this.incrementActive(token);
+
       try {
         if (this.isExpired(token)) {
           await this.refreshToken(token);
         }
-        // 成功获取token，增加活跃计数
-        this.incrementActive(token);
+        // 成功获取token
         return token;
       } catch (error) {
+        // 刷新失败，回滚活跃计数
+        const current = this.getActiveCount(token);
+        if (current > 0) {
+          this.activeRequests.set(token.refresh_token, current - 1);
+        }
+
         // 标记此 token 已尝试失败
         triedTokens.add(token.refresh_token);
 
