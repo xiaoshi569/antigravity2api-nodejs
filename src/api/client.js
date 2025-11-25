@@ -81,7 +81,7 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
       // 根据状态码分类处理
       if (statusCode === 401 || statusCode === 403) {
         tokenManager.recordFailure(token, { statusCode, message: errorText });
-        tokenManager.disableCurrentToken(token);
+        await tokenManager.disableCurrentToken(token);
         // 直接throw，外层finally会释放token
         throw new Error(`账号认证失败(${statusCode})，已自动禁用。错误详情: ${errorText}`);
       } else if (statusCode === 429) {
@@ -312,7 +312,7 @@ export async function getAvailableModels() {
       // 根据状态码分类处理
       if (statusCode === 401 || statusCode === 403) {
         tokenManager.recordFailure(token, { statusCode, message: errorText });
-        tokenManager.disableCurrentToken(token);
+        await tokenManager.disableCurrentToken(token);
         const error = new Error(`账号认证失败(${statusCode})，已自动禁用。错误详情: ${errorText}`);
         error.statusCode = statusCode;
         throw error;

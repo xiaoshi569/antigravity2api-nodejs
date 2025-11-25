@@ -79,6 +79,41 @@ app.get('/api/stats', (req, res) => {
   }
 });
 
+// 更新 Token 备注端点
+app.post('/api/tokens/:index/remark', async (req, res) => {
+  try {
+    const tokenIndex = parseInt(req.params.index);
+    const { remark } = req.body;
+
+    // 验证 tokenIndex
+    if (isNaN(tokenIndex) || tokenIndex < 0) {
+      return res.status(400).json({ error: 'Invalid token index' });
+    }
+
+    // 验证 remark 类型和长度
+    if (remark !== undefined && remark !== null && typeof remark !== 'string') {
+      return res.status(400).json({ error: 'Remark must be a string' });
+    }
+
+    const remarkValue = remark || '';
+    if (remarkValue.length > 500) {
+      return res.status(400).json({ error: 'Remark too long (max 500 characters)' });
+    }
+
+    const success = await tokenManager.updateRemark(tokenIndex, remarkValue);
+
+    if (success) {
+      res.json({ success: true, message: '备注更新成功' });
+    } else {
+      // updateRemark 返回 false 说明索引超出范围
+      res.status(404).json({ error: 'Token not found' });
+    }
+  } catch (error) {
+    logger.error('更新备注失败:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // 提供静态文件服务（监控界面）
 app.use(express.static(path.join(__dirname, '../../public')));
 

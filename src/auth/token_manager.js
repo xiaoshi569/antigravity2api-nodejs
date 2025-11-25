@@ -21,6 +21,10 @@ class TokenManager {
 
     // 添加统计功能
     this.stats = new Map(); // 记录每个 token 的使用统计
+
+    // 文件写入锁（防止并发写入冲突）
+    this.fileLock = Promise.resolve();
+
     this.loadTokens();
   }
 
@@ -213,6 +217,43 @@ class TokenManager {
           status = 'idle';
         }
 
+        // 计算最后状态（基于最后一次操作的结果）
+        let lastStatus = 'unknown';
+        let lastStatusText = '-';
+        if (stats.totalRequests === 0) {
+          lastStatus = 'unused';
+          lastStatusText = '未使用';
+        } else if (stats.lastError) {
+          // 有错误记录，判断错误类型
+          const errorCode = stats.lastError.statusCode;
+
+          // 优先检查网络错误（可能没有statusCode）
+          if (stats.lastError.isNetworkError) {
+            lastStatus = 'network_error';
+            lastStatusText = '网络错误';
+          } else if (errorCode === 429) {
+            lastStatus = 'rate_limited';
+            lastStatusText = '限流(429)';
+          } else if (errorCode === 401 || errorCode === 403) {
+            lastStatus = 'auth_failed';
+            lastStatusText = `认证失败(${errorCode})`;
+          } else if (errorCode && errorCode >= 500 && errorCode < 600) {
+            lastStatus = 'server_error';
+            lastStatusText = `服务器错误(${errorCode})`;
+          } else if (errorCode) {
+            lastStatus = 'error';
+            lastStatusText = `错误(${errorCode})`;
+          } else {
+            // 没有statusCode的错误
+            lastStatus = 'error';
+            lastStatusText = '错误';
+          }
+        } else {
+          // 没有错误记录，最后一次是成功的
+          lastStatus = 'success';
+          lastStatusText = '成功';
+        }
+
         allTokens.push({
           id: `token_${index}`,
           index: index,
@@ -227,13 +268,16 @@ class TokenManager {
           refreshCount: stats.refreshCount,
           lastUsedTime: stats.lastUsedTime,
           lastError: stats.lastError,
+          lastStatus: lastStatus,           // 最后状态类型
+          lastStatusText: lastStatusText,   // 最后状态文本
           status: status,
           expiresAt: token.timestamp && token.expires_in
             ? token.timestamp + (token.expires_in * 1000)
             : null,
           cooldownUntil: stats.cooldownUntil, // 冷却结束时间戳
           cooldownRemaining: cooldownRemaining, // 剩余冷却时间（毫秒）
-          consecutive429Count: stats.consecutive429Count || 0 // 连续 429 失败次数
+          consecutive429Count: stats.consecutive429Count || 0, // 连续 429 失败次数
+          remark: token.remark || '' // 备注（从accounts.json读取）
         });
       });
     } catch (error) {
@@ -273,6 +317,7 @@ class TokenManager {
       });
 
       // 如果有新生成的projectId，保存到文件
+      // 注意：这个写入只在首次启动时发生，不会有并发问题
       if (needSave) {
         fs.writeFileSync(this.filePath, JSON.stringify(tokenArray, null, 2), 'utf8');
         log.info('已保存projectId到accounts.json');
@@ -398,11 +443,63 @@ class TokenManager {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
-  saveToFile() {
-    try {
-      const data = fs.readFileSync(this.filePath, 'utf8');
-      const allTokens = JSON.parse(data);
+  /**
+   * 带锁的文件写入操作（防止并发写入冲突）
+   * @param {Function} operation - 文件操作函数，接收 allTokens 数组，返回修改后的数组
+   * @returns {Promise<boolean>} 操作是否成功
+   */
+  async writeFileWithLock(operation) {
+    // 将新的写入操作加入队列
+    this.fileLock = this.fileLock.then(async () => {
+      try {
+        const data = fs.readFileSync(this.filePath, 'utf8');
+        const allTokens = JSON.parse(data);
 
+        // 执行操作
+        const modifiedTokens = await operation(allTokens);
+
+        // 写入文件
+        fs.writeFileSync(this.filePath, JSON.stringify(modifiedTokens, null, 2), 'utf8');
+        return true;
+      } catch (error) {
+        log.error('文件写入失败:', error.message);
+        return false;
+      }
+    });
+
+    return this.fileLock;
+  }
+
+  /**
+   * 更新token的备注
+   * @param {number} tokenIndex - token索引（从0开始）
+   * @param {string} remark - 新的备注内容
+   * @returns {Promise<boolean>} 是否更新成功
+   */
+  async updateRemark(tokenIndex, remark) {
+    const success = await this.writeFileWithLock((allTokens) => {
+      if (tokenIndex < 0 || tokenIndex >= allTokens.length) {
+        log.error(`更新备注失败: 索引 ${tokenIndex} 超出范围`);
+        throw new Error('索引超出范围');
+      }
+
+      allTokens[tokenIndex].remark = remark;
+
+      // 同步更新内存中的token
+      const memToken = this.tokens.find(t => t.refresh_token === allTokens[tokenIndex].refresh_token);
+      if (memToken) {
+        memToken.remark = remark;
+      }
+
+      log.info(`成功更新token ${tokenIndex} 的备注: ${remark}`);
+      return allTokens;
+    });
+
+    return success;
+  }
+
+  async saveToFile() {
+    return await this.writeFileWithLock((allTokens) => {
       this.tokens.forEach(memToken => {
         const index = allTokens.findIndex(t => t.refresh_token === memToken.refresh_token);
         if (index !== -1) {
@@ -412,16 +509,14 @@ class TokenManager {
         }
       });
 
-      fs.writeFileSync(this.filePath, JSON.stringify(allTokens, null, 2), 'utf8');
-    } catch (error) {
-      log.error('保存文件失败:', error.message);
-    }
+      return allTokens;
+    });
   }
 
-  disableToken(token) {
+  async disableToken(token) {
     log.warn(`禁用token`)
     token.enable = false;
-    this.saveToFile();
+    await this.saveToFile();
     this.loadTokens();
   }
 
@@ -622,10 +717,10 @@ class TokenManager {
     throw lastError || new Error('获取Token失败，重试次数已耗尽');
   }
 
-  disableCurrentToken(token) {
+  async disableCurrentToken(token) {
     const found = this.tokens.find(t => t.access_token === token.access_token);
     if (found) {
-      this.disableToken(found);
+      await this.disableToken(found);
     }
   }
 

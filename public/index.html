@@ -291,6 +291,184 @@
         padding: 8px 6px;
       }
     }
+
+    /* Modal styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.5);
+      animation: fadeIn 0.3s;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-content {
+      background-color: white;
+      margin: 10% auto;
+      padding: 0;
+      border-radius: 12px;
+      width: 90%;
+      max-width: 500px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      animation: slideDown 0.3s;
+    }
+
+    @keyframes slideDown {
+      from {
+        transform: translateY(-50px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .modal-header {
+      padding: 20px 25px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-header h2 {
+      margin: 0;
+      font-size: 1.25rem;
+      color: #333;
+    }
+
+    .close {
+      color: #999;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+      border: none;
+      background: none;
+      padding: 0;
+      line-height: 1;
+      transition: color 0.2s;
+    }
+
+    .close:hover {
+      color: #333;
+    }
+
+    .modal-body {
+      padding: 25px;
+    }
+
+    .modal-body label {
+      display: block;
+      margin-bottom: 8px;
+      color: #666;
+      font-weight: 500;
+    }
+
+    .modal-body input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 1rem;
+      transition: border-color 0.2s;
+    }
+
+    .modal-body input:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+
+    .modal-footer {
+      padding: 15px 25px;
+      border-top: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+
+    .modal-footer button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-cancel {
+      background-color: #f5f5f5;
+      color: #666;
+    }
+
+    .btn-cancel:hover {
+      background-color: #e0e0e0;
+    }
+
+    .btn-save {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-save:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(102, 126, 234, 0.3);
+    }
+
+    .edit-btn {
+      background: none;
+      border: none;
+      color: #667eea;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 6px;
+      margin-left: 6px;
+      transition: color 0.2s;
+    }
+
+    .edit-btn:hover {
+      color: #764ba2;
+    }
+
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 15px 20px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 500;
+      z-index: 2000;
+      animation: slideInRight 0.3s;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+
+    @keyframes slideInRight {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+
+    .notification.success {
+      background-color: #4caf50;
+    }
+
+    .notification.error {
+      background-color: #f44336;
+    }
   </style>
 </head>
 <body>
@@ -363,7 +541,8 @@
               <th>最后使用</th>
               <th>冷却时间</th>
               <th>连续429</th>
-              <th>最后错误</th>
+              <th>最后状态</th>
+              <th>备注</th>
             </tr>
           </thead>
           <tbody id="tokensBody">
@@ -406,6 +585,40 @@
       const message = error.message || String(error);
       const shortMessage = message.length > 50 ? message.substring(0, 50) + '...' : message;
       return `${statusCode}${shortMessage}`;
+    }
+
+    // HTML转义函数（防止XSS）
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // HTML属性转义函数（防止属性注入）
+    function escapeAttr(text) {
+      if (!text) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // 获取最后状态的样式类
+    function getLastStatusClass(lastStatus) {
+      const statusMap = {
+        'success': 'status-active',        // 绿色
+        'unused': 'status-idle',           // 灰色
+        'rate_limited': 'status-rate-limited',  // 橙色
+        'auth_failed': 'status-disabled',  // 红色
+        'server_error': 'status-disabled', // 红色
+        'network_error': 'status-rate-limited', // 橙色
+        'error': 'status-disabled',        // 红色
+        'unknown': 'status-idle'           // 灰色
+      };
+      return statusMap[lastStatus] || 'status-idle';
     }
 
     // 格式化冷却时间
@@ -480,9 +693,15 @@
               ? 'color: #f57c00; font-weight: 600;'
               : '';
 
+            // 获取备注的tooltip（完整错误信息）- 需要转义防止XSS
+            const errorTooltip = token.lastError ? escapeAttr(JSON.stringify(token.lastError, null, 2)) : '';
+            const remarkText = token.remark || '-';
+            const remarkTextForDisplay = escapeHtml(remarkText);
+            const remarkTextForAttr = escapeAttr(remarkText);
+
             row.innerHTML = `
               <td>${token.index + 1}</td>
-              <td><code style="font-size: 0.8125rem;">${token.tokenPreview}</code></td>
+              <td><code style="font-size: 0.8125rem;">${escapeHtml(token.tokenPreview)}</code></td>
               <td><span class="status-badge ${getStatusClass(token.status)}">${getStatusText(token.status)}</span></td>
               <td><span class="${token.enabled ? 'enabled-yes' : 'enabled-no'}">${token.enabled ? '是' : '否'}</span></td>
               <td>${token.activeRequests}</td>
@@ -501,7 +720,13 @@
               <td class="time-text">${formatTime(token.lastUsedTime)}</td>
               <td class="time-text" style="${cooldownStyle}">${cooldownText}</td>
               <td style="${token.consecutive429Count > 0 ? 'color: #f57c00; font-weight: 600;' : ''}">${token.consecutive429Count > 0 ? token.consecutive429Count : '-'}</td>
-              <td class="error-text" title="${token.lastError ? JSON.stringify(token.lastError) : ''}">${formatError(token.lastError)}</td>
+              <td title="${errorTooltip}">
+                <span class="status-badge ${getLastStatusClass(token.lastStatus)}">${escapeHtml(token.lastStatusText)}</span>
+              </td>
+              <td style="max-width: 200px;">
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; max-width: 150px; vertical-align: middle;" title="${remarkTextForAttr}">${remarkTextForDisplay}</span>
+                <button class="edit-btn" data-token-index="${token.index}" data-remark="${remarkTextForAttr}" title="编辑备注">✏️</button>
+              </td>
             `;
 
             tbody.appendChild(row);
@@ -533,6 +758,16 @@
     window.addEventListener('DOMContentLoaded', () => {
       loadStats();
       startAutoRefresh();
+
+      // 使用事件委托处理编辑按钮点击（避免重复添加监听器）
+      document.getElementById('tokensBody').addEventListener('click', (event) => {
+        const btn = event.target.closest('.edit-btn');
+        if (btn) {
+          const tokenIndex = parseInt(btn.getAttribute('data-token-index'));
+          const currentRemark = btn.getAttribute('data-remark');
+          openRemarkModal(tokenIndex, currentRemark);
+        }
+      });
     });
 
     // 页面可见性改变时控制自动刷新
@@ -544,6 +779,117 @@
         startAutoRefresh();
       }
     });
+
+    // 备注编辑功能
+    let currentEditingTokenIndex = null;
+
+    function openRemarkModal(tokenIndex, currentRemark) {
+      currentEditingTokenIndex = tokenIndex;
+      const modal = document.getElementById('remarkModal');
+      const input = document.getElementById('remarkInput');
+
+      // 设置当前备注值（处理转义的HTML实体）
+      const textarea = document.createElement('textarea');
+      textarea.innerHTML = currentRemark === '-' ? '' : currentRemark;
+      input.value = textarea.value;
+
+      modal.style.display = 'block';
+      input.focus();
+    }
+
+    function closeRemarkModal() {
+      const modal = document.getElementById('remarkModal');
+      modal.style.display = 'none';
+      currentEditingTokenIndex = null;
+      document.getElementById('remarkInput').value = '';
+    }
+
+    async function saveRemark() {
+      if (currentEditingTokenIndex === null) return;
+
+      const remark = document.getElementById('remarkInput').value.trim();
+      const tokenIndex = currentEditingTokenIndex;
+
+      try {
+        const response = await fetch(`/api/tokens/${tokenIndex}/remark`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ remark })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          showNotification('备注更新成功', 'success');
+          closeRemarkModal();
+          // 刷新数据以显示最新备注
+          await loadStats();
+        } else {
+          showNotification('备注更新失败: ' + (data.error || '未知错误'), 'error');
+        }
+      } catch (error) {
+        console.error('保存备注失败:', error);
+        showNotification('备注更新失败: ' + error.message, 'error');
+      }
+    }
+
+    function showNotification(message, type = 'success') {
+      const notification = document.createElement('div');
+      notification.className = `notification ${type}`;
+      notification.textContent = message;
+
+      document.body.appendChild(notification);
+
+      // 3秒后自动移除
+      setTimeout(() => {
+        notification.style.animation = 'slideInRight 0.3s reverse';
+        setTimeout(() => {
+          document.body.removeChild(notification);
+        }, 300);
+      }, 3000);
+    }
+
+    // 点击模态框外部关闭
+    window.addEventListener('click', (event) => {
+      const modal = document.getElementById('remarkModal');
+      if (event.target === modal) {
+        closeRemarkModal();
+      }
+    });
+
+    // ESC键关闭模态框
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        closeRemarkModal();
+      }
+    });
+
+    // Enter键保存
+    document.getElementById('remarkInput')?.addEventListener('keypress', (event) => {
+      if (event.key === 'Enter') {
+        saveRemark();
+      }
+    });
   </script>
+
+  <!-- 备注编辑模态框 -->
+  <div id="remarkModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>编辑备注</h2>
+        <button class="close" onclick="closeRemarkModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <label for="remarkInput">备注内容（例如：邮箱地址）</label>
+        <input type="text" id="remarkInput" placeholder="输入备注内容..." maxlength="200">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-cancel" onclick="closeRemarkModal()">取消</button>
+        <button class="btn-save" onclick="saveRemark()">保存</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
