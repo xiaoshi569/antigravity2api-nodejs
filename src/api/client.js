@@ -5,11 +5,7 @@ import logger from '../utils/logger.js';
 export async function generateAssistantResponse(requestBody, callback, retryCount = 0) {
   const maxRetries = config.retry?.maxRetries ?? 3;
   const baseDelay = config.retry?.baseDelay ?? 1000;
-  const token = await tokenManager.getToken();
-
-  if (!token) {
-    throw new Error('没有可用的token，请运行 npm run login 获取token');
-  }
+  const token = await tokenManager.getToken(); // 如果没有可用token，会抛出带 statusCode 的错误
 
   const url = config.api.url;
 
@@ -27,15 +23,14 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       body: JSON.stringify(requestBody)
     });
   } catch (networkError) {
-    // 网络错误（连接超时、网络中断等）- 释放当前 token
-    tokenManager.releaseToken(token);
+    // 网络错误（连接超时、网络中断等）- 直接切换 token 重试
     tokenManager.recordFailure(token, { message: networkError.message, isNetworkError: true });
     if (retryCount < maxRetries) {
-      const waitTime = baseDelay * (retryCount + 1);
-      logger.warn(`网络错误(${networkError.message})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      logger.warn(`网络错误(${networkError.message})，切换token重试 (${retryCount + 1}/${maxRetries})`);
+      tokenManager.releaseToken(token); // 递归前释放
       return generateAssistantResponse(requestBody, callback, retryCount + 1);
     }
+    // 重试耗尽，不释放，让 finally 处理
     throw new Error(`网络错误，重试次数已耗尽: ${networkError.message}`);
   }
 
@@ -78,36 +73,35 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
       }
     }
 
-    // 释放当前 token
-    tokenManager.releaseToken(token);
-
     // 根据状态码分类处理
     if (statusCode === 401 || statusCode === 403) {
       tokenManager.recordFailure(token, { statusCode, message: errorText });
       tokenManager.disableCurrentToken(token);
+      // 不释放 token，让 finally 统一处理
       throw new Error(`账号认证失败(${statusCode})，已自动禁用。错误详情: ${errorText}`);
     } else if (statusCode === 429) {
-      // 429 限流 - 切换 token 重试
+      // 429 限流 - 直接切换 token 重试（不等待，让 getToken 自动跳过冷却中的 token）
       tokenManager.recordFailure(token, { statusCode, message: errorText, retryAfter: retryAfterMs });
       if (retryCount < maxRetries) {
-        const waitTime = retryAfterMs || baseDelay;
-        logger.warn(`请求限流(429)，等待 ${Math.round(waitTime / 1000)}秒 后切换token重试 (${retryCount + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+        logger.warn(`请求限流(429)，切换token重试 (${retryCount + 1}/${maxRetries})`);
+        tokenManager.releaseToken(token); // 递归前释放
         return generateAssistantResponse(requestBody, callback, retryCount + 1);
       }
+      // 重试耗尽，不释放，让 finally 处理
       throw new Error(`请求过于频繁(429)，重试次数已耗尽。错误详情: ${errorText}`);
     } else if (statusCode >= 500 && statusCode < 600) {
-      // 5xx 服务器错误 - 等待后重试
+      // 5xx 服务器错误 - 直接切换 token 重试
       tokenManager.recordFailure(token, { statusCode, message: errorText });
       if (retryCount < maxRetries) {
-        const waitTime = baseDelay * (retryCount + 1); // 递增等待时间
-        logger.warn(`服务器错误(${statusCode})，等待 ${Math.round(waitTime / 1000)}秒 后重试 (${retryCount + 1}/${maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
+        logger.warn(`服务器错误(${statusCode})，切换token重试 (${retryCount + 1}/${maxRetries})`);
+        tokenManager.releaseToken(token); // 递归前释放
         return generateAssistantResponse(requestBody, callback, retryCount + 1);
       }
+      // 重试耗尽，不释放，让 finally 处理
       throw new Error(`服务器错误(${statusCode})，重试次数已耗尽。错误详情: ${errorText}`);
     } else {
       tokenManager.recordFailure(token, { statusCode, message: errorText });
+      // 不释放，让 finally 处理
       throw new Error(`API请求失败 (${statusCode}): ${errorText}`);
     }
   }
@@ -287,11 +281,7 @@ export async function generateAssistantResponse(requestBody, callback, retryCoun
 }
 
 export async function getAvailableModels() {
-  const token = await tokenManager.getToken();
-
-  if (!token) {
-    throw new Error('没有可用的token，请运行 npm run login 获取token');
-  }
+  const token = await tokenManager.getToken(); // 如果没有可用token，会抛出带 statusCode 的错误
 
   try {
     const response = await fetch(config.api.modelsUrl, {

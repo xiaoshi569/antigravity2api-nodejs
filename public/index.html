@@ -362,6 +362,7 @@
               <th>刷新次数</th>
               <th>最后使用</th>
               <th>冷却时间</th>
+              <th>连续429</th>
               <th>最后错误</th>
             </tr>
           </thead>
@@ -499,6 +500,7 @@
               <td>${token.refreshCount}</td>
               <td class="time-text">${formatTime(token.lastUsedTime)}</td>
               <td class="time-text" style="${cooldownStyle}">${cooldownText}</td>
+              <td style="${token.consecutive429Count > 0 ? 'color: #f57c00; font-weight: 600;' : ''}">${token.consecutive429Count > 0 ? token.consecutive429Count : '-'}</td>
               <td class="error-text" title="${token.lastError ? JSON.stringify(token.lastError) : ''}">${formatError(token.lastError)}</td>
             `;
 

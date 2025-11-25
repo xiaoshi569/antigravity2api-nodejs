@@ -221,22 +221,32 @@ app.post('/v1/chat/completions', concurrencyLimiter, async (req, res) => {
   } catch (error) {
     logger.error('生成响应失败:', error.message);
 
-    // 根据错误消息判断状态码
-    let statusCode = 500;
-    if (error.message.includes('(401)') || error.message.includes('(403)')) {
-      statusCode = 401;
-    } else if (error.message.includes('(429)')) {
-      statusCode = 429;
-    } else if (error.message.includes('没有可用的token')) {
-      statusCode = 503; // Service Unavailable
+    // 优先使用错误对象上的 statusCode，否则根据错误消息判断
+    let statusCode = error.statusCode || 500;
+    if (!error.statusCode) {
+      // 向后兼容：根据错误消息判断状态码
+      if (error.message.includes('(401)') || error.message.includes('(403)')) {
+        statusCode = 401;
+      } else if (error.message.includes('(429)')) {
+        statusCode = 429;
+      } else if (error.message.includes('没有可用的token') || error.message.includes('都不可用')) {
+        statusCode = 503;
+      }
     }
 
     if (!res.headersSent) {
+      // 如果是 429 错误且有 retryAfter，添加 Retry-After 响应头
+      if (statusCode === 429 && error.retryAfter) {
+        res.setHeader('Retry-After', error.retryAfter);
+      }
+
       // 错误时统一返回JSON格式，不使用SSE流
       res.status(statusCode).json({
         error: {
           message: error.message,
-          type: 'api_error',
+          type: statusCode === 429 ? 'rate_limit_error' :
+                statusCode === 503 ? 'service_unavailable' :
+                statusCode === 401 ? 'authentication_error' : 'api_error',
           code: statusCode
         }
       });

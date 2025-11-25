@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { log } from '../utils/logger.js';
+import config from '../config/config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,7 +42,8 @@ class TokenManager {
         lastError: null,
         refreshCount: 0,
         status: 'idle', // idle, active, rate_limited, disabled
-        cooldownUntil: null // 冷却结束时间（毫秒时间戳）
+        cooldownUntil: null, // 冷却结束时间（毫秒时间戳）
+        consecutive429Count: 0 // 连续 429 失败次数（用于指数退避）
       });
     }
     return this.stats.get(token.refresh_token);
@@ -60,6 +62,7 @@ class TokenManager {
     stats.lastUsedTime = Date.now();
     stats.status = 'active';
     stats.cooldownUntil = null; // 成功后清除冷却时间
+    stats.consecutive429Count = 0; // 成功后重置连续 429 计数
   }
 
   /**
@@ -82,21 +85,25 @@ class TokenManager {
     // 根据错误类型设置状态
     if (error.statusCode === 429) {
       stats.status = 'rate_limited';
+      stats.consecutive429Count = (stats.consecutive429Count || 0) + 1;
 
       // 记录冷却时间（从错误响应中提取）
       // 注意：error.retryAfter 已经是毫秒为单位
       if (error.retryAfter && typeof error.retryAfter === 'number') {
         stats.cooldownUntil = Date.now() + error.retryAfter;
       } else {
-        // 如果没有提供冷却时间，默认使用基础延迟
-        stats.cooldownUntil = Date.now() + 2000; // 默认 2 秒
+        // 如果没有提供冷却时间，使用固定延迟
+        // 让轮询机制自然切换到其他 token，而不是指数退避
+        stats.cooldownUntil = Date.now() + 2000; // 固定 2 秒
       }
     } else if (error.statusCode === 401 || error.statusCode === 403) {
       stats.status = 'disabled';
       stats.cooldownUntil = null; // 被禁用的 token 不需要冷却时间
+      stats.consecutive429Count = 0;
     } else {
       // 其他错误，清除冷却时间
       stats.cooldownUntil = null;
+      stats.consecutive429Count = 0;
     }
   }
 
@@ -177,7 +184,8 @@ class TokenManager {
           lastError: null,
           refreshCount: 0,
           status: token.enable === false ? 'disabled' : 'idle',
-          cooldownUntil: null
+          cooldownUntil: null,
+          consecutive429Count: 0
         };
 
         // 计算成功率
@@ -223,7 +231,8 @@ class TokenManager {
             ? token.timestamp + (token.expires_in * 1000)
             : null,
           cooldownUntil: stats.cooldownUntil, // 冷却结束时间戳
-          cooldownRemaining: cooldownRemaining // 剩余冷却时间（毫秒）
+          cooldownRemaining: cooldownRemaining, // 剩余冷却时间（毫秒）
+          consecutive429Count: stats.consecutive429Count || 0 // 连续 429 失败次数
         });
       });
     } catch (error) {
@@ -385,7 +394,11 @@ class TokenManager {
   }
 
   async getToken() {
-    if (this.tokens.length === 0) return null;
+    if (this.tokens.length === 0) {
+      const error = new Error('没有可用的 token，请运行 npm run login 获取 token');
+      error.statusCode = 503;
+      throw error;
+    }
 
     // 记录初始token数量，避免循环中数组变化导致问题
     const initialLength = this.tokens.length;
@@ -394,15 +407,45 @@ class TokenManager {
 
     for (let i = 0; i < initialLength; i++) {
       // 检查是否还有可用token
-      if (this.tokens.length === 0) return null;
+      if (this.tokens.length === 0) {
+        const error = new Error('所有 token 已被禁用');
+        error.statusCode = 503;
+        throw error;
+      }
 
       // 智能分配：选择负载最低的 token（排除已尝试失败的）
       let selectedToken = null;
       let minActive = Infinity;
+      let coolingDownCount = 0; // 正在冷却中的 token 数量
+      let overloadedCount = 0; // 达到并发上限的 token 数量
+      let untriedCount = 0; // 未尝试的 token 数量
+      let minCooldownRemaining = Infinity; // 最短冷却剩余时间
+
+      // 获取每个 token 最大并发限制
+      const perTokenLimit = config.concurrency?.perTokenConcurrency || 2;
 
       for (const t of this.tokens) {
         if (triedTokens.has(t.refresh_token)) continue;
+
+        untriedCount++; // 统计未尝试的 token
+
+        // 检查是否正在冷却中
+        const stats = this.stats.get(t.refresh_token);
+        if (stats?.cooldownUntil && stats.cooldownUntil > Date.now()) {
+          coolingDownCount++;
+          const cooldownRemaining = stats.cooldownUntil - Date.now();
+          minCooldownRemaining = Math.min(minCooldownRemaining, cooldownRemaining);
+          continue;
+        }
+
         const active = this.getActiveCount(t);
+
+        // 检查是否达到单个 token 的并发上限
+        if (active >= perTokenLimit) {
+          overloadedCount++;
+          continue; // 跳过已达到并发上限的 token
+        }
+
         if (active < minActive) {
           minActive = active;
           selectedToken = t;
@@ -410,8 +453,29 @@ class TokenManager {
       }
 
       if (!selectedToken) {
-        // 所有 token 都尝试过了
-        return null;
+        // 没有可用的 token，判断原因
+        if (untriedCount === 0) {
+          // 所有 token 都已尝试过但都失败了
+          const error = new Error('所有 token 都不可用');
+          error.statusCode = 503;
+          throw error;
+        } else if (coolingDownCount === untriedCount && coolingDownCount > 0) {
+          // 所有未尝试的 token 都在冷却中
+          const error = new Error('所有 token 都在冷却中，请稍后重试');
+          error.statusCode = 429;
+          error.retryAfter = Math.ceil(minCooldownRemaining / 1000); // 转换为秒
+          throw error;
+        } else if (overloadedCount + coolingDownCount === untriedCount && untriedCount > 0) {
+          // 所有未尝试的 token 都达到并发上限或正在冷却
+          const error = new Error(`所有 token 都已达到并发上限 (每个token最多${perTokenLimit}个并发)`);
+          error.statusCode = 503;
+          throw error;
+        } else {
+          // 其他情况（理论上不应该到这里）
+          const error = new Error('所有 token 都不可用');
+          error.statusCode = 503;
+          throw error;
+        }
       }
 
       const token = selectedToken;
@@ -432,35 +496,35 @@ class TokenManager {
 
         // 根据状态码分类处理
         if (error.isNetworkError) {
-          // 网络错误 - 暂时性错误，等待后切换
-          const waitTime = this.calculateBackoff(0, 1000, 3000);
-          log.warn(`Token ${tokenIndex} 网络错误，等待 ${Math.round(waitTime/1000)}秒 后切换到下一个`);
-          await this.sleep(waitTime);
+          // 网络错误 - 直接切换到下一个 token
+          log.warn(`Token ${tokenIndex} 网络错误，切换到下一个`);
+          this.recordFailure(token, error);
         } else if (statusCode === 401) {
           // 401 未授权 - 可能是refresh_token过期，禁用账号
           log.warn(`Token ${tokenIndex} 认证失败(401)，refresh_token可能已过期，禁用账号`);
+          this.recordFailure(token, { statusCode, message: error.message });
           this.disableToken(token);
           // disableToken 会重新加载tokens，不需要手动移动索引
           continue;
         } else if (statusCode === 403) {
           // 403 权限不足 - 永久性错误，禁用账号
           log.warn(`Token ${tokenIndex} 无权限(403)，禁用账号`);
+          this.recordFailure(token, { statusCode, message: error.message });
           this.disableToken(token);
           // disableToken 会重新加载tokens，不需要手动移动索引
           continue;
         } else if (statusCode === 429) {
-          // 429 限流 - 暂时性错误，等待后继续
-          const waitTime = error.retryAfter || this.calculateBackoff(0, 2000, 5000);
-          log.warn(`Token ${tokenIndex} 遇到限流(429)，等待 ${Math.round(waitTime/1000)}秒 后切换到下一个`);
-          await this.sleep(waitTime);
+          // 429 限流 - 记录失败并设置冷却时间
+          log.warn(`Token ${tokenIndex} 遇到限流(429)，切换到下一个`);
+          this.recordFailure(token, { statusCode, message: error.message, retryAfter: error.retryAfter });
         } else if (statusCode >= 500 && statusCode < 600) {
-          // 5xx 服务器错误 - 暂时性错误，短暂等待后切换
-          const waitTime = this.calculateBackoff(0, 500, 2000);
-          log.warn(`Token ${tokenIndex} 遇到服务器错误(${statusCode})，等待 ${Math.round(waitTime/1000)}秒 后切换`);
-          await this.sleep(waitTime);
+          // 5xx 服务器错误 - 直接切换到下一个 token
+          log.warn(`Token ${tokenIndex} 遇到服务器错误(${statusCode})，切换到下一个`);
+          this.recordFailure(token, { statusCode, message: error.message });
         } else {
           // 其他错误 - 记录并切换
           log.error(`Token ${tokenIndex} 刷新失败(${statusCode || 'unknown'}):`, error.message);
+          this.recordFailure(token, { statusCode, message: error.message });
         }
 
         // 切换到下一个token（非禁用情况）
@@ -470,7 +534,10 @@ class TokenManager {
       }
     }
 
-    return null;
+    // 所有 token 都尝试过但都失败了
+    const error = new Error('所有 token 都不可用，请检查账号状态');
+    error.statusCode = 503;
+    throw error;
   }
 
   /**
@@ -486,25 +553,10 @@ class TokenManager {
     while (retryCount <= retries) {
       try {
         const token = await this.getToken();
-        if (token) {
-          if (retryCount > 0) {
-            log.info(`经过 ${retryCount} 次重试后成功获取token`);
-          }
-          return token;
+        if (retryCount > 0) {
+          log.info(`经过 ${retryCount} 次重试后成功获取token`);
         }
-
-        // getToken返回null，检查是否还有可用token
-        if (this.tokens.length === 0) {
-          throw new Error('所有token都已被禁用');
-        }
-
-        // 有token但获取失败，增加重试次数避免无限循环
-        retryCount++;
-        if (retryCount <= retries) {
-          const waitTime = this.calculateBackoff(retryCount - 1);
-          log.warn(`获取token失败，等待 ${Math.round(waitTime/1000)}秒 后进行第 ${retryCount}/${retries} 次重试`);
-          await this.sleep(waitTime);
-        }
+        return token;
       } catch (error) {
         lastError = error;
         const statusCode = error.statusCode;
