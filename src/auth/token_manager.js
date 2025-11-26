@@ -65,6 +65,7 @@ class TokenManager {
     stats.totalRequests++;
     stats.successCount++;
     stats.lastUsedTime = Date.now();
+    stats.lastError = null; // 成功后清除错误记录
     stats.status = 'active';
     stats.cooldownUntil = null; // 成功后清除冷却时间
     stats.consecutive429Count = 0; // 成功后重置连续 429 计数
@@ -84,7 +85,8 @@ class TokenManager {
     stats.lastError = {
       statusCode: error.statusCode || null,
       message: error.message || String(error),
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isNetworkError: error.isNetworkError || false  // 保存网络错误标记
     };
 
     // 根据错误类型设置状态
