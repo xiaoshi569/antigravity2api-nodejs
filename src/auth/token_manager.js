@@ -25,7 +25,13 @@ class TokenManager {
     // 文件写入锁（防止并发写入冲突）
     this.fileLock = Promise.resolve();
 
+    // 每日重置定时器
+    this.dailyResetTimer = null;
+
     this.loadTokens();
+
+    // 启动每日统计重置定时任务
+    this.scheduleDailyReset();
   }
 
   /**
@@ -123,6 +129,63 @@ class TokenManager {
     if (!stats) return;
 
     stats.refreshCount++;
+  }
+
+  /**
+   * 重置所有 token 的每日统计数据
+   */
+  resetDailyStats() {
+    log.info('🔄 执行每日统计重置...');
+    let resetCount = 0;
+
+    this.stats.forEach((stats, tokenKey) => {
+      // 重置每日统计数据
+      stats.totalRequests = 0;
+      stats.successCount = 0;
+      stats.failureCount = 0;
+      // 保留：lastUsedTime, lastError, status, cooldownUntil, consecutive429Count, refreshCount
+      resetCount++;
+    });
+
+    log.info(`✓ 已重置 ${resetCount} 个 token 的每日统计数据`);
+  }
+
+  /**
+   * 计划每日0点重置统计数据
+   */
+  scheduleDailyReset() {
+    // 清除旧的定时器（如果存在）
+    if (this.dailyResetTimer) {
+      clearTimeout(this.dailyResetTimer);
+      this.dailyResetTimer = null;
+    }
+
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0); // 设置为明天0点
+
+    const msUntilMidnight = tomorrow - now;
+
+    log.info(`📅 每日统计重置已计划，将在 ${tomorrow.toLocaleString('zh-CN')} 执行（${Math.round(msUntilMidnight / 1000 / 60)} 分钟后）`);
+
+    // 保存定时器 ID，方便清理
+    this.dailyResetTimer = setTimeout(() => {
+      this.resetDailyStats();
+      // 重置后，重新计划下一次（避免时间漂移）
+      this.scheduleDailyReset();
+    }, msUntilMidnight);
+  }
+
+  /**
+   * 停止每日重置定时器
+   */
+  stopDailyReset() {
+    if (this.dailyResetTimer) {
+      clearTimeout(this.dailyResetTimer);
+      this.dailyResetTimer = null;
+      log.info('⏹️ 已停止每日统计重置定时任务');
+    }
   }
 
   /**
