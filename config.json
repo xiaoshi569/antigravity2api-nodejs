@@ -31,6 +31,16 @@
     "timeout": 300000,
     "_comment": "maxConcurrent: 'auto'自动计算(token数×perTokenConcurrency)或固定数字, perTokenConcurrency: 每个token最大并发数"
   },
+  "imageStorage": {
+    "maxImages": 10,
+    "baseUrl": null,
+    "_comment": "maxImages: 最多保存图片数, baseUrl: 自定义图片访问基础URL(null=自动检测)"
+  },
+  "fingerprint": {
+    "enabled": false,
+    "timeout": 30000,
+    "_comment": "enabled: 启用TLS指纹请求器(降低被封概率), timeout: 请求超时时间(毫秒)"
+  },
   "systemInstruction": "",
   "thinking": {
     "output": "reasoning_content",

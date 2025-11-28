@@ -2,6 +2,58 @@ import tokenManager from '../auth/token_manager.js';
 import config from '../config/config.js';
 import logger from '../utils/logger.js';
 import { generateRequestBody } from '../utils/utils.js';
+import AntigravityRequester from '../AntigravityRequester.js';
+
+// 请求客户端：根据配置决定是否使用 TLS 指纹请求器
+let requester = null;
+let useFingerprintRequester = false;
+
+if (config.fingerprint?.enabled === true) {
+  try {
+    requester = new AntigravityRequester();
+    useFingerprintRequester = true;
+    logger.info('✓ TLS 指纹请求器已启用');
+  } catch (error) {
+    logger.warn(`⚠ TLS 指纹请求器初始化失败，降级使用原生 fetch: ${error.message}`);
+    useFingerprintRequester = false;
+  }
+} else {
+  logger.info('✓ 使用原生 fetch (可在 config.json 中启用指纹请求器)');
+}
+
+// 辅助函数：构建请求头
+function buildHeaders(token) {
+  return {
+    'Host': config.api.host,
+    'User-Agent': config.api.userAgent,
+    'Authorization': `Bearer ${token.access_token}`,
+    'Content-Type': 'application/json',
+    'Accept-Encoding': 'gzip'
+  };
+}
+
+// 辅助函数：执行流式请求（统一 fetch 和指纹请求器）
+async function performStreamRequest(url, token, requestBody) {
+  const headers = buildHeaders(token);
+
+  if (useFingerprintRequester) {
+    // 使用指纹请求器
+    const reqConfig = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      timeout_ms: config.fingerprint?.timeout || 30000
+    };
+    return requester.antigravity_fetchStream(url, reqConfig);
+  } else {
+    // 使用原生 fetch
+    return await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody)
+    });
+  }
+}
 
 export async function generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount = 0) {
   const maxRetries = config.retry?.maxRetries ?? 3;
@@ -15,28 +67,41 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
 
   try {
     let response;
+    let fingerprintStream = null; // 用于指纹请求器的流式响应
+
     try {
-      response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Host': config.api.host,
-          'User-Agent': config.api.userAgent,
-          'Authorization': `Bearer ${token.access_token}`,
-          'Content-Type': 'application/json',
-          'Accept-Encoding': 'gzip'
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const streamResponse = await performStreamRequest(url, token, requestBody);
+
+      if (useFingerprintRequester) {
+        // 指纹请求器返回的是 StreamResponse 对象
+        fingerprintStream = streamResponse;
+        // 等待 onStart 获取状态码
+        await new Promise((resolve, reject) => {
+          streamResponse.onStart(({ status, headers }) => {
+            if (status !== 200) {
+              reject({ status, headers });
+            } else {
+              resolve();
+            }
+          });
+          streamResponse.onError(reject);
+        });
+        response = { ok: true, status: 200, fingerprintStream };
+      } else {
+        // 原生 fetch 返回 Response 对象
+        response = streamResponse;
+      }
     } catch (networkError) {
       // 网络错误（连接超时、网络中断等）- 直接切换 token 重试
-      tokenManager.recordFailure(token, { message: networkError.message, isNetworkError: true });
+      const errorMessage = networkError.message || String(networkError);
+      tokenManager.recordFailure(token, { message: errorMessage, isNetworkError: true });
       if (retryCount < maxRetries) {
-        logger.warn(`网络错误(${networkError.message})，切换token重试 (${retryCount + 1}/${maxRetries})`);
+        logger.warn(`网络错误(${errorMessage})，切换token重试 (${retryCount + 1}/${maxRetries})`);
         tokenManager.releaseToken(token); // 递归前释放
         return generateAssistantResponse(openaiMessages, modelName, parameters, openaiTools, callback, retryCount + 1);
       }
       // 重试耗尽，直接throw，外层finally会释放token
-      throw new Error(`网络错误，重试次数已耗尽: ${networkError.message}`);
+      throw new Error(`网络错误，重试次数已耗尽: ${errorMessage}`);
     }
 
     if (!response.ok) {
@@ -114,12 +179,24 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
     logger.debug('开始处理响应流...');
 
     let streamSuccess = false; // 标记流是否成功处理完成
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
     let thinkingMode = false;
     let toolCalls = [];
     let textBuffer = ''; // 缓冲区，用于处理跨 chunk 的标记
     let lineBuffer = ''; // 缓冲区，用于处理跨 chunk 的 SSE 行
+
+    // 根据请求类型创建流读取器
+    let reader = null;
+    let decoder = null;
+
+    if (useFingerprintRequester && fingerprintStream) {
+      // 指纹请求器：使用事件监听方式
+      // (后续处理逻辑会通过 fingerprintStream.onData() 回调)
+      reader = null;
+    } else {
+      // 原生 fetch：使用 getReader() 方式
+      reader = response.body.getReader();
+      decoder = new TextDecoder();
+    }
 
     // 处理缓冲区中的文本，检测 <think> 和 </think> 标记
     function processBuffer() {
@@ -180,14 +257,8 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
       }
     }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        logger.debug('流读取完成');
-        break;
-      }
-
-      const chunk = decoder.decode(value);
+    // 定义通用的chunk处理函数
+    const processChunk = (chunk) => {
       // 将新chunk添加到行缓冲区
       lineBuffer += chunk;
 
@@ -257,6 +328,38 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
         } catch (e) {
           logger.debug('JSON解析失败:', e.message, '原始数据:', jsonStr.substring(0, 100));
         }
+      }
+    };
+
+    // 根据请求类型选择流读取方式
+    if (useFingerprintRequester && fingerprintStream) {
+      // 使用指纹请求器的事件监听方式
+      await new Promise((resolve, reject) => {
+        fingerprintStream.onData((data) => {
+          processChunk(data);
+        });
+
+        fingerprintStream.onEnd(() => {
+          logger.debug('指纹请求器流读取完成');
+          resolve();
+        });
+
+        fingerprintStream.onError((error) => {
+          logger.error('指纹请求器流错误:', error);
+          reject(error);
+        });
+      });
+    } else {
+      // 使用原生 fetch 的 getReader() 方式
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          logger.debug('fetch 流读取完成');
+          break;
+        }
+
+        const chunk = decoder.decode(value);
+        processChunk(chunk);
       }
     }
 
