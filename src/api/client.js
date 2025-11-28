@@ -3,6 +3,7 @@ import config from '../config/config.js';
 import logger from '../utils/logger.js';
 import { generateRequestBody } from '../utils/utils.js';
 import AntigravityRequester from '../AntigravityRequester.js';
+import { saveBase64Image } from '../utils/imageStorage.js';
 
 // 请求客户端：根据配置决定是否使用 TLS 指纹请求器
 let requester = null;
@@ -45,6 +46,29 @@ async function performStreamRequest(url, token, requestBody) {
       timeout_ms: config.fingerprint?.timeout || 30000
     };
     return requester.antigravity_fetchStream(url, reqConfig);
+  } else {
+    // 使用原生 fetch
+    return await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody)
+    });
+  }
+}
+
+// 辅助函数：执行普通请求（统一 fetch 和指纹请求器）
+async function performNormalRequest(url, token, requestBody) {
+  const headers = buildHeaders(token);
+
+  if (useFingerprintRequester) {
+    // 使用指纹请求器
+    const reqConfig = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(requestBody),
+      timeout_ms: config.fingerprint?.timeout || 30000
+    };
+    return await requester.antigravity_fetch(url, reqConfig);
   } else {
     // 使用原生 fetch
     return await fetch(url, {
@@ -314,6 +338,19 @@ export async function generateAssistantResponse(openaiMessages, modelName, param
                     arguments: JSON.stringify(part.functionCall.args || {})
                   }
                 });
+              } else if (part.inlineData) {
+                logger.debug('检测到 inlineData (生成的图片)');
+                // 保存图片到本地并获取 URL
+                try {
+                  const imageUrl = saveBase64Image(part.inlineData.data, part.inlineData.mimeType);
+                  logger.debug('图片已保存，URL:', imageUrl);
+                  // 输出图片 URL 作为文本（以 markdown 格式）
+                  const imageMarkdown = `![生成的图片](${imageUrl})`;
+                  textBuffer += imageMarkdown;
+                  processBuffer();
+                } catch (error) {
+                  logger.error('保存图片失败:', error.message);
+                }
               }
             }
           } else {
@@ -394,17 +431,7 @@ export async function getAvailableModels() {
   const token = await tokenManager.getToken(); // 如果没有可用token，会抛出带 statusCode 的错误
 
   try {
-    const response = await fetch(config.api.modelsUrl, {
-      method: 'POST',
-      headers: {
-        'Host': config.api.host,
-        'User-Agent': config.api.userAgent,
-        'Authorization': `Bearer ${token.access_token}`,
-        'Content-Type': 'application/json',
-        'Accept-Encoding': 'gzip'
-      },
-      body: JSON.stringify({})
-    });
+    const response = await performNormalRequest(config.api.modelsUrl, token, {});
 
     if (!response.ok) {
       const errorText = await response.text();
