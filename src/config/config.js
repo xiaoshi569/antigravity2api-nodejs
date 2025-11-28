@@ -29,6 +29,10 @@ const defaultConfig = {
     queueLimit: 50,
     timeout: 300000
   },
+  imageStorage: {
+    maxImages: 10,
+    baseUrl: null  // 如果为 null，将自动使用局域网 IP 或 127.0.0.1
+  },
   systemInstruction: '你是聊天机器人，专门为用户提供聊天和情绪价值，协助进行小说创作或者角色扮演，也可以提供数学或者代码上的建议',
   thinking: {
     output: 'reasoning_content'

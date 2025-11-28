@@ -1,3 +1,4 @@
+import os from 'os';
 import config from '../config/config.js';
 import { generateRequestId } from './idGenerator.js';
 function extractImagesFromContent(content) {
@@ -272,6 +273,29 @@ function generateRequestBody(openaiMessages, modelName, parameters, openaiTools,
     userAgent: "antigravity"
   }
 }
+/**
+ * 获取默认网络 IP 地址
+ * @returns {string} IP 地址
+ */
+function getDefaultIp() {
+  const interfaces = os.networkInterfaces();
+  if (interfaces.WLAN) {
+    for (const inter of interfaces.WLAN) {
+      if (inter.family === 'IPv4' && !inter.internal) {
+        return inter.address;
+      }
+    }
+  } else if (interfaces.wlan2) {
+    for (const inter of interfaces.wlan2) {
+      if (inter.family === 'IPv4' && !inter.internal) {
+        return inter.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
+
 export {
-  generateRequestBody
+  generateRequestBody,
+  getDefaultIp
 }
